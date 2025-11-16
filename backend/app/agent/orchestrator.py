@@ -54,6 +54,12 @@ CREATE:
 - "Make me a task to do X" / "I want to work on Y" → create_task(title="X" or "Y") + respond "Done"
 - "Add task for tomorrow" → create_task(deadline=tomorrow) + respond "Done"
 - Infer priority from language: "urgent"/"ASAP" = urgent, "important" = high, default = medium
+- TIME DEFAULTS:
+  * If only date given (no time) → use 12:00 PM (noon)
+  * If only month given → use 1st day of that month at 12:00 PM
+  * If only week given → use Monday of that week at 12:00 PM
+  * Examples: "tomorrow" = tomorrow at 12:00 PM, "December" = Dec 1 at 12:00 PM
+- IMPORTANT: After creating a task, DO NOT navigate to that date unless user specifically asks
 
 DELETE:
 - "Delete task about X" → search_tasks(query="X"), if ONE match: delete_task, else ask which one

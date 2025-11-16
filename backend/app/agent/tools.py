@@ -262,13 +262,32 @@ def _create_task(
     deadline: str | None = None,
 ) -> dict[str, Any]:
     """Create a new task."""
+    
+    # Parse deadline and set default time to 12:00 PM if only date is provided
+    parsed_deadline = None
+    if deadline:
+        try:
+            parsed_deadline = datetime.fromisoformat(deadline)
+            # If time is exactly midnight (00:00:00), it means only date was provided
+            # Set default time to 12:00 PM (noon)
+            if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
+                parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
+        except ValueError:
+            # If ISO format fails, try to parse date only and add 12:00 PM
+            try:
+                from datetime import date
+                date_only = date.fromisoformat(deadline)
+                parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
+            except ValueError:
+                parsed_deadline = None
+    
     task = Task(
         title=title,
         description=description,
         notes=notes,
         priority=priority,
         status=TaskStatus.TODO.value,
-        deadline=datetime.fromisoformat(deadline) if deadline else None,
+        deadline=parsed_deadline,
     )
     
     db.add(task)
@@ -287,13 +306,8 @@ def _create_task(
         },
     }
     
-    # Add UI command to navigate to the task's date
-    if task.deadline:
-        result["ui_command"] = {
-            "type": "change_view",
-            "view_mode": "daily",
-            "target_date": task.deadline.date().isoformat(),
-        }
+    # DO NOT automatically navigate to the task's date
+    # User must explicitly ask to see that date
     
     return result
 
@@ -327,7 +341,22 @@ def _update_task(
         if status == TaskStatus.COMPLETED.value and not task.completed_at:
             task.completed_at = datetime.utcnow()
     if deadline is not None:
-        task.deadline = datetime.fromisoformat(deadline)
+        # Parse deadline and set default time to 12:00 PM if only date is provided
+        try:
+            parsed_deadline = datetime.fromisoformat(deadline)
+            # If time is exactly midnight (00:00:00), it means only date was provided
+            # Set default time to 12:00 PM (noon)
+            if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
+                parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
+            task.deadline = parsed_deadline
+        except ValueError:
+            # If ISO format fails, try to parse date only and add 12:00 PM
+            try:
+                from datetime import date
+                date_only = date.fromisoformat(deadline)
+                task.deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
+            except ValueError:
+                pass
     
     task.updated_at = datetime.utcnow()
     db.commit()
@@ -345,13 +374,8 @@ def _update_task(
         },
     }
     
-    # If deadline was updated, add UI command to navigate to the new date
-    if deadline is not None and task.deadline:
-        result["ui_command"] = {
-            "type": "change_view",
-            "view_mode": "daily",
-            "target_date": task.deadline.date().isoformat(),
-        }
+    # DO NOT automatically navigate to the task's date
+    # User must explicitly ask to see that date
     
     return result
 
