@@ -21,12 +21,24 @@ def create_application() -> FastAPI:
     )
 
     # CORS middleware for frontend
+    # Allow all origins in development, specific origins in production
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://localhost:3000",
+        "https://localhost:3001",
+        "https://taskappforntend.vercel.app/",
+    ]
+    
+    # For development/testing, allow all origins
+    # Comment this out in production and use specific origins above
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://localhost:3001","https://taskappforntend.vercel.app/"],
+        allow_origins=["*"],  # Allow all origins for now
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["*"],
     )
 
     application.include_router(api_router, prefix=settings.api_prefix)
@@ -40,4 +52,3 @@ def create_application() -> FastAPI:
 
 
 app = create_application()
-
