@@ -226,12 +226,14 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
         
         max_iterations = 3  # Prevent infinite loops and keep latency low
         iteration = 0
-        assistant_response = ""
         all_tool_calls = []
         all_tool_results = []
         
         while iteration < max_iterations:
             iteration += 1
+            
+            # Reset response for this iteration
+            assistant_response = ""
             
             # Stream response from Claude
             try:
