@@ -1,0 +1,43 @@
+"""FastAPI application entry point."""
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.router import api_router
+from app.core.settings import get_settings
+from app.db.init_db import init_db
+
+
+def create_application() -> FastAPI:
+    """Instantiate and configure the FastAPI application."""
+    settings = get_settings()
+
+    application = FastAPI(
+        title=settings.project_name,
+        version=settings.version,
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url=f"{settings.api_prefix}/openapi.json",
+    )
+
+    # CORS middleware for frontend
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000", "http://localhost:3001"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    application.include_router(api_router, prefix=settings.api_prefix)
+
+    @application.on_event("startup")
+    async def startup_event():
+        """Initialize database on startup."""
+        init_db()
+
+    return application
+
+
+app = create_application()
+
