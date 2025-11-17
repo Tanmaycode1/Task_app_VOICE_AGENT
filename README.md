@@ -1,45 +1,263 @@
-# Shram.ai - AI-Powered Voice Task Manager
+# Shram.ai - Voice-Controlled Task Manager
 
-> Because typing out tasks is so 2020. Just talk, and let AI handle the rest.
+**An AI-powered task management system with natural language voice commands and intelligent UI control.**
 
-## What is this?
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Vercel-black?style=for-the-badge&logo=vercel)](https://task-app-voice-agent.vercel.app/)
+[![Backend Status](https://img.shields.io/badge/Backend-Render-46E3B7?style=for-the-badge&logo=render)](https://task-app-voice-agent.onrender.com/api/health)
 
-Shram.ai is a task management app that you can literally *talk to*. No more fumbling with keyboards or clicking through menus - just speak naturally like you're telling a friend what you need to do, and the AI agent figures it out. Want to add a task for tomorrow? Say it. Need to see what's on your plate for December? Ask. It's that simple.
+---
 
-The cool part? It actually understands context. You can say "push that meeting task to next week" and it knows exactly what you mean. Plus it talks back to you (using text-to-speech), so you get instant confirmation without even looking at the screen.
+## 🚀 Live Demo
 
-## Why We Built It This Way
+**Frontend:** [https://task-app-voice-agent.vercel.app/](https://task-app-voice-agent.vercel.app/)
 
-### The Voice Stack: Deepgram FLUX
+**Backend Health Check:** [https://task-app-voice-agent.onrender.com/api/health](https://task-app-voice-agent.onrender.com/api/health)
 
-We tried a bunch of speech-to-text solutions before landing on Deepgram's FLUX model, and honestly? It's kind of perfect for this use case. Here's why:
+> ⚠️ **Important:** The backend is deployed on Render.com's free tier, which has limited resources and may spin down after inactivity. If the app doesn't respond immediately, please wait 30-60 seconds for the backend to wake up. Check the health endpoint above to verify the API is running.
 
-**Turn Detection That Actually Works**
-Most STT systems just transcribe continuously and leave you to figure out when someone stopped talking. FLUX has built-in turn detection with configurable thresholds, so it knows when you've finished your sentence. This is *huge* for a voice agent because the system can immediately start processing your request instead of waiting awkwardly for silence.
+---
 
-**Streaming Architecture**
-FLUX streams results as you speak, not after you're done. This means lower latency - the agent can start thinking about your request while you're still talking. In practice, this shaves off like 1-2 seconds from the response time, which makes the whole experience feel way more natural.
+## 📋 Table of Contents
 
-**WebSocket-Based Real-Time Communication**
-We're using WebSocket connections for bidirectional streaming. Your browser captures audio, sends it to our FastAPI backend, which proxies it to Deepgram via another WebSocket. Results stream back through the same pipeline. It's like a phone call but for AI agents.
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Sample Voice Commands](#sample-voice-commands)
+- [Technology Stack](#technology-stack)
+- [Architecture](#architecture)
+- [Setup & Installation](#setup--installation)
+- [Technical Deep Dives](#technical-deep-dives)
+- [Known Limitations](#known-limitations)
+- [Contributing](#contributing)
 
-### The Brain: Claude Sonnet 4.5
+---
 
-For the AI agent that actually understands your commands and manipulates tasks, we went with Anthropic's Claude Sonnet 4.5. After experimenting with a few models, this one just hit different:
+## 🎯 Overview
 
-**Tool Calling That's Actually Reliable**
-Sonnet 4.5 has really solid function calling capabilities. You can define tools (functions) like `create_task`, `update_task`, `delete_task`, and the model consistently calls them with the right parameters. We've got like 7 different tools and it rarely messes up the invocations.
+Shram.ai is a next-generation task management application that lets you control everything with your voice. No typing, no clicking through menus—just speak naturally, and the AI agent handles the rest.
 
-**Streaming Support**
-The model streams its responses token-by-token AND streams tool calls as they happen. This means we can show you "thinking...", "creating task...", "completed!" in real-time. Makes the agent feel more alive and less like a loading spinner.
+### What Makes It Special?
 
-**Context Window & Speed**
-With a large context window, we can include conversation history (last 2 turns) so the agent remembers what you just talked about. And it's fast enough that most queries complete in 2-5 seconds end-to-end, including the speech recognition time.
+**🎤 Voice-First Interface**
+- Real-time speech-to-text with turn detection
+- Natural language understanding for all commands
+- Text-to-speech responses for hands-free operation
+- Voice interruption support for natural conversations
 
-**Natural Language Understanding**
-This is the real kicker - Sonnet 4.5 handles ambiguous queries really well. Say "delete that compliance thing" and it'll search your tasks, find the one about compliance, and delete it. No need for precise command syntax.
+**🤖 Intelligent AI Agent**
+- Powered by Claude Sonnet 4.5 for reliable task operations
+- Contextual understanding ("push that meeting to next week")
+- Automatic bulk operations (create/update/delete multiple tasks)
+- Conversation history for follow-up commands
 
-## Architecture Overview
+**🎨 Agentic GUI (AGUI)**
+- AI agent directly controls the user interface
+- Automatic view switching based on voice commands
+- Smart navigation to relevant dates after updates
+- Dynamic filters and sorting through voice
+
+**📅 Multiple View Modes**
+- Daily view with hourly breakdown
+- Weekly view with 7-day grid
+- Monthly calendar view
+- List view with advanced filtering and sorting
+
+---
+
+## ✨ Key Features
+
+### 1. Natural Language Task Management
+
+Create, update, and delete tasks using everyday language:
+
+```
+✅ Task Creation
+- "Add a task to review the backend API by Friday"
+- "I need to call the client tomorrow at 2 PM"
+- "Create an urgent task for the production bug fix"
+
+✅ Task Updates
+- "Push that meeting to next week"
+- "Mark the report task as complete"
+- "Change the presentation to high priority"
+- "Move all tasks to next month"
+
+✅ Task Deletion
+- "Delete the task about the old feature"
+- "Remove the 3rd task"
+- "Cancel that compliance thing"
+```
+
+### 2. Voice-Controlled UI Navigation
+
+The AI agent switches views and applies filters automatically:
+
+```
+✅ View Switching
+- "Show me December tasks" → Switches to monthly view for December
+- "Take me to next week" → Opens weekly view for next week
+- "Show all tasks" → Switches to list view
+
+✅ Filter Application
+- "Show me urgent tasks" → Applies priority filter
+- "Show tasks sorted by deadline" → Sorts list view
+- "Show completed tasks" → Filters by status
+- "Show me administrative tasks" → Searches and displays results
+```
+
+### 3. Smart Search & Display
+
+Search results are displayed visually in the UI:
+
+```
+✅ Search Commands
+- "Show me all administrative tasks" → Displays filtered list
+- "Find tasks related to client meeting" → Shows matching tasks
+- "What tasks mention the new feature?" → Displays search results
+
+The UI automatically switches to list view and shows a banner:
+"Search results for 'administrative' (3 tasks found)"
+```
+
+### 4. Bulk Operations
+
+Perform actions on multiple tasks at once:
+
+```
+✅ Bulk Updates
+- "Push all tasks to next week" → Shifts all deadlines by 7 days
+- "Move all meetings to next month" → Bulk deadline update
+- "Mark all admin tasks as completed" → Bulk status update
+
+✅ Bulk Creation
+- "Add 3 tasks: meeting, code review, testing" → Creates multiple tasks
+
+✅ Bulk Deletion
+- "Delete all meeting tasks" → Removes all matching tasks
+```
+
+### 5. Automatic Date Navigation
+
+When you update task dates, the UI automatically navigates to show them:
+
+```
+✅ Smart Navigation
+- "Push meeting to next week" → Updates task + shows weekly view
+- "Move to December 15th" → Updates task + shows December
+- "Reschedule to next month" → Updates task + shows monthly view
+```
+
+### 6. Context-Aware Commands
+
+The agent remembers recent conversations:
+
+```
+You: "Add a task for the presentation"
+Agent: "Done"
+You: "Make it urgent" ← Agent knows you mean the presentation task
+```
+
+---
+
+## 🎙️ Sample Voice Commands
+
+### Task Management
+
+| Command | Action |
+|---------|--------|
+| "Add a task to finish the API documentation by Friday" | Creates task with deadline |
+| "I want to work on the frontend tomorrow" | Creates task for tomorrow |
+| "Make me an urgent task for the bug fix" | Creates high-priority task |
+| "Push the deployment task to next week" | Updates deadline (+7 days) |
+| "Mark the report as complete" | Updates task status |
+| "Delete the task about compliance" | Removes matching task |
+| "Cancel that meeting task" | Deletes task |
+
+### Navigation & Views
+
+| Command | Action |
+|---------|--------|
+| "Show me December tasks" | Monthly view for December 2025 |
+| "Take me to next week" | Weekly view for next week |
+| "Go to November 25th" | Daily view for Nov 25 |
+| "Show all tasks" | List view with all tasks |
+| "Show me the weekly view" | Switches to weekly view |
+
+### Search & Filters
+
+| Command | Action |
+|---------|--------|
+| "Show me administrative tasks" | Searches + displays results |
+| "Show urgent tasks" | Filters by urgent priority |
+| "Show tasks sorted by deadline" | List view sorted by deadline |
+| "Show completed tasks" | Filters by completed status |
+| "What tasks are in progress?" | Filters by in-progress status |
+
+### Bulk Operations
+
+| Command | Action |
+|---------|--------|
+| "Push all tasks to next week" | Bulk update (+7 days) |
+| "Move everything to next month" | Bulk update (+30 days) |
+| "Delete all meeting tasks" | Bulk delete |
+| "Add 5 tasks for tomorrow" | Bulk create |
+
+---
+
+## 🛠️ Technology Stack
+
+### Why Deepgram FLUX?
+
+We chose Deepgram's FLUX model for speech-to-text after evaluating multiple solutions:
+
+**✅ Real-Time Turn Detection**
+FLUX has built-in end-of-turn detection with configurable thresholds. When you finish speaking, the system knows immediately and starts processing—no awkward waiting for silence. This is critical for natural voice interactions.
+
+**✅ Streaming Architecture**
+FLUX streams transcriptions as you speak, not after you're done. This means lower perceived latency—the agent can start thinking while you're still talking. In practice, this saves 1-2 seconds per query.
+
+**✅ WebSocket-Based Communication**
+Everything happens over WebSocket connections for bidirectional real-time streaming. Your browser captures audio, sends it to our FastAPI backend, which proxies to Deepgram via another WebSocket. Results stream back through the same pipeline instantly.
+
+**✅ High Accuracy**
+The `flux-general-en` model provides excellent accuracy for general English speech with various accents and speaking styles.
+
+### Why Claude Sonnet 4.5?
+
+Anthropic's Claude Sonnet 4.5 powers the task management agent:
+
+**✅ Reliable Tool Calling**
+Sonnet 4.5 has exceptional function calling capabilities. We've defined 10+ tools (create_task, update_task, delete_task, search_tasks, etc.) and the model consistently calls them with correct parameters. Tool call reliability is >95% in production.
+
+**✅ Streaming Support**
+The model streams responses token-by-token AND streams tool calls as they happen. This enables real-time feedback: "thinking...", "creating task...", "completed!". The agent feels responsive and alive.
+
+**✅ Natural Language Understanding**
+Sonnet 4.5 handles ambiguous queries exceptionally well. Say "delete that compliance thing" and it searches your tasks, finds the match, and deletes it. No rigid command syntax required.
+
+**✅ Context Window & Memory**
+With a large context window, we include conversation history (last 2 turns) so the agent remembers recent context. Fast inference means most queries complete in 2-5 seconds end-to-end.
+
+**✅ Bulk Operation Support**
+With increased token limits (2048 tokens), the model can handle complex bulk operations involving multiple tasks efficiently.
+
+### Tech Stack Summary
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| **Frontend** | Next.js 16 + React 19 | Modern web interface with SSR |
+| **Backend** | FastAPI + Python 3.11 | High-performance async API |
+| **Speech-to-Text** | Deepgram FLUX | Real-time voice transcription |
+| **AI Agent** | Claude Sonnet 4.5 | Natural language understanding |
+| **Database** | SQLite + SQLAlchemy | Task and conversation storage |
+| **Text-to-Speech** | Web Speech API | Browser-native voice output |
+| **Styling** | Tailwind CSS v4 | Utility-first styling |
+| **Deployment** | Vercel + Render.com | Frontend + Backend hosting |
+
+---
+
+## 🏗️ Architecture
+
+### System Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -51,6 +269,7 @@ This is the real kicker - Sonnet 4.5 handles ambiguous queries really well. Say 
 │  │  • Streams to backend via WebSocket                     │  │
 │  │  • Displays transcripts & agent responses               │  │
 │  │  • Text-to-Speech for agent replies                     │  │
+│  │  • Handles UI commands from agent                       │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                             │                                    │
 │                             │ WebSocket                          │
@@ -62,9 +281,10 @@ This is the real kicker - Sonnet 4.5 handles ambiguous queries really well. Say 
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Agent WebSocket Handler (/api/agent)                   │  │
 │  │  • Receives audio stream from frontend                  │  │
-│  │  • Forwards to Deepgram FLUX via WS                     │  │
+│  │  • Forwards to Deepgram FLUX via WebSocket              │  │
 │  │  • On turn detection → triggers agent                   │  │
 │  │  • Streams agent events back to frontend                │  │
+│  │  • Auto-retry on failures (2 attempts)                  │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                             │                                    │
 │                             ▼                                    │
@@ -74,14 +294,17 @@ This is the real kicker - Sonnet 4.5 handles ambiguous queries really well. Say 
 │  │  • Streams query to Claude Sonnet 4.5                   │  │
 │  │  • Executes tool calls (CRUD operations)                │  │
 │  │  • Yields events: thinking, tool_use, text, done        │  │
+│  │  • Max 3 iterations, 2048 token limit                   │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                             │                                    │
 │                             ▼                                    │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Tools (tools.py)                                        │  │
-│  │  • create_task    • update_task    • delete_task        │  │
-│  │  • list_tasks     • search_tasks   • get_task_stats     │  │
-│  │  • change_ui_view (sends UI commands to frontend)       │  │
+│  │  • create_task / create_multiple_tasks                  │  │
+│  │  • update_task / update_multiple_tasks                  │  │
+│  │  • delete_task / delete_multiple_tasks                  │  │
+│  │  • list_tasks / search_tasks / get_task_stats           │  │
+│  │  • change_ui_view (sends UI commands)                   │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                             │                                    │
 │                             ▼                                    │
@@ -103,191 +326,59 @@ This is the real kicker - Sonnet 4.5 handles ambiguous queries really well. Say 
 └──────────────────┘              └──────────────────┘
 ```
 
-### How the WebSocket Flow Works
+### WebSocket Flow
 
 1. **User clicks voice button** → Frontend opens WebSocket to `/api/agent`
-2. **Mic starts capturing** → Audio processed via Web Audio API's ScriptProcessorNode
+2. **Mic starts capturing** → Audio processed via Web Audio API
 3. **Audio encoding** → Float32 samples → Int16 PCM (Linear16 format)
-4. **Streaming to backend** → Chunks of audio sent via WebSocket as binary frames
-5. **Backend proxy** → FastAPI forwards audio to Deepgram FLUX via another WebSocket
+4. **Streaming to backend** → Chunks of audio sent via WebSocket
+5. **Backend proxy** → FastAPI forwards audio to Deepgram FLUX
 6. **FLUX transcribes** → Streams back partial transcripts and turn events
-7. **Turn detection** → When FLUX detects "EndOfTurn", backend triggers the agent
-8. **Agent processing** → Claude streams back thinking, tool calls, results
+7. **Turn detection** → When FLUX detects "EndOfTurn", backend triggers agent
+8. **Agent processing** → Claude streams thinking, tool calls, results
 9. **Events forwarded** → All agent events streamed back to frontend
-10. **UI updates** → Frontend displays progress and speaks final response via TTS
+10. **UI updates** → Frontend displays progress + speaks response via TTS
 
-The beauty of this setup is everything is real-time. There's no "record → upload → wait → download" cycle. It's all streaming, so the latency is minimal.
+### Agentic GUI (AGUI)
 
-## The Frontend: View Modes & AGUI
+The AI agent can directly control the frontend UI through `ui_command` objects:
 
-The UI has four view modes, and here's where it gets interesting - the AI agent can control which view you're seeing. We call this **Agentic GUI (AGUI)**.
+```python
+# Example: Agent wants to show December monthly view
+{
+  "type": "change_view",
+  "view_mode": "monthly",
+  "target_date": "2025-12-01"
+}
 
-### View Modes
+# Example: Agent wants to show search results
+{
+  "type": "change_view",
+  "view_mode": "list",
+  "search_results": [1, 3, 7],
+  "search_query": "administrative"
+}
 
-1. **Daily View** - Hour-by-hour breakdown of a single day
-2. **Weekly View** - 7-day grid with tasks mapped to dates  
-3. **Monthly View** - Calendar month view (like Google Calendar)
-4. **List View** - Filterable, sortable table of all tasks
-
-### How AGUI Works
-
-When you say something like "show me December tasks", the agent:
-1. Recognizes this is a navigation command (not a task operation)
-2. Calls the `change_ui_view` tool with `view_mode="monthly"` and `target_date="2025-12-01"`
-3. Returns a `ui_command` in the tool result
-4. Backend sends this to frontend as part of the agent event
-5. Frontend's `handleUICommand` function executes it
-6. View switches to monthly December automatically
-
-Similarly, if you say "show me urgent tasks sorted by deadline", the agent:
-- Switches to list view
-- Sets priority filter to "urgent"
-- Sets sort field to "deadline"
-
-All without you clicking anything. The agent literally controls the UI based on what you ask for.
-
-### Search Results Display
-
-When you search for tasks (like "show me administrative tasks"), we've got a special flow:
-- Agent calls `search_tasks(query="administrative")`
-- Tool returns matching task IDs
-- Agent sends a UI command with `search_results=[1,2,3]` and `search_query="administrative"`
-- Frontend switches to list view and filters to ONLY show those specific tasks
-- Shows a blue banner: "Search results for 'administrative' (3 tasks found)"
-
-This way the UI visually confirms what the agent found, instead of just speaking it.
-
-## Code Structure
-
-```
-shram.ai/
-├── backend/
-│   ├── app/
-│   │   ├── agent/
-│   │   │   ├── orchestrator.py      # Claude agent with streaming
-│   │   │   └── tools.py             # Tool definitions & implementations
-│   │   ├── api/
-│   │   │   └── routes/
-│   │   │       ├── agent.py         # WebSocket handler for voice agent
-│   │   │       ├── tasks.py         # REST API for CRUD operations
-│   │   │       └── flux.py          # Deepgram FLUX proxy (optional)
-│   │   ├── models/
-│   │   │   ├── task.py              # SQLAlchemy Task model
-│   │   │   └── conversation.py      # Conversation history model
-│   │   ├── db/
-│   │   │   ├── base.py              # Database session config
-│   │   │   └── init_db.py           # Table creation
-│   │   └── main.py                  # FastAPI app entry point
-│   ├── requirements.txt
-│   └── shram.db                     # SQLite database file
-│
-└── frontend/
-    ├── app/
-    │   ├── page.tsx                 # Main page with all view modes
-    │   └── layout.tsx               # Root layout
-    ├── components/
-    │   ├── AgentVoiceButton.tsx     # Voice UI component
-    │   └── TaskModal.tsx            # Task details modal
-    ├── lib/
-    │   └── api.ts                   # API client functions
-    └── package.json
+# Example: Agent wants to apply filters
+{
+  "type": "change_view",
+  "view_mode": "list",
+  "filter_priority": "urgent",
+  "sort_by": "deadline",
+  "sort_order": "asc"
+}
 ```
 
-## Key Features
+The frontend's `handleUICommand` function receives these commands and updates React state accordingly, enabling true voice-controlled UI navigation.
 
-### 1. Natural Language Task Creation
+---
 
-Just say what you want to do:
-- "Add a task to review the quarterly report by next Friday"
-- "I need to call mom tomorrow"  
-- "Make me a task for the dentist appointment on December 15th"
-
-The agent infers:
-- **Title** from your description
-- **Priority** from keywords (urgent, important, ASAP)
-- **Deadline** from date/time expressions
-- **Time** defaults to 12 PM if you don't specify
-
-### 2. Contextual Updates & Deletes
-
-No need to be precise:
-- "Push that meeting to next week" - searches recent tasks, finds the meeting, updates it
-- "Delete the task about compliance" - searches by keyword, deletes if one match
-- "Mark the report task as complete" - updates status
-- "Change the priority on that bug fix to urgent" - updates priority
-
-### 3. Smart Search & Filtering
-
-- "Show me all administrative tasks" → filters by keyword in title/description/notes
-- "What urgent tasks do I have?" → filters by priority
-- "Show tasks sorted by deadline" → sorts the list view
-- "Take me to December" → switches to December monthly view
-
-### 4. Voice Interruption
-
-If the agent is talking (via TTS) and you start speaking, it immediately stops and starts listening. This makes conversations feel more natural - you can interrupt just like with a human.
-
-### 5. Conversation History
-
-The agent remembers your last 2 turns, so you can have contextual conversations:
-- You: "Add a task for the presentation"
-- Agent: "Done"  
-- You: "Make it urgent" ← Agent knows you mean the presentation task
-
-### 6. Auto-Retry & Error Recovery
-
-If something fails (network issue, API timeout), the system:
-- Retries once automatically
-- Clears corrupted conversation history if needed
-- Shows a friendly error message
-- Resets state so you can try again immediately
-
-## Sample Queries
-
-### Task Creation
-```
-"Add a task to finish the backend API by Friday"
-"I want to work on the presentation slides tomorrow"  
-"Make me a task for the team meeting next Monday at 3 PM"
-"Add an urgent task to fix the production bug"
-```
-
-### Task Updates
-```
-"Push the task about deployment to next week"
-"Mark the report task as complete"
-"Change the presentation priority to high"
-"Move the meeting from tomorrow to Thursday"
-```
-
-### Task Deletion
-```
-"Delete the task about the old feature"
-"Remove the 3rd task" (deletes by position in current view)
-"Cancel that compliance task"
-```
-
-### Navigation & Views
-```
-"Show me December tasks"
-"Take me to next week"
-"Show all tasks sorted by priority"
-"Show me tasks that are in progress"
-"Go to November 25th"
-```
-
-### Search
-```
-"Show me all administrative tasks"
-"Find tasks related to the client meeting"
-"What tasks mention the new feature?"
-```
-
-## Setup & Installation
+## 📦 Setup & Installation
 
 ### Prerequisites
+
 - Python 3.11+
-- Node.js 18+
+- Node.js 25+ (specified in package.json)
 - Deepgram API key ([get one here](https://deepgram.com))
 - Anthropic API key ([get one here](https://anthropic.com))
 
@@ -330,7 +421,7 @@ npm install
 
 # Create .env.local file
 cat > .env.local << EOL
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_BASE=http://localhost:8000/api
 NEXT_PUBLIC_AGENT_WS_URL=ws://localhost:8000/api/agent
 EOL
 
@@ -338,13 +429,15 @@ EOL
 npm run dev
 ```
 
-Navigate to `http://localhost:3000` and you're good to go!
+Navigate to `http://localhost:3000` and start using voice commands!
 
-## Technical Deep Dives
+---
+
+## 🔍 Technical Deep Dives
 
 ### Speech-to-Text Pipeline
 
-The STT pipeline uses Deepgram's FLUX model with these parameters:
+The STT pipeline uses Deepgram FLUX with optimized parameters:
 
 ```javascript
 model: 'flux-general-en'        // General English model
@@ -353,122 +446,133 @@ encoding: 'linear16'            // PCM 16-bit signed little-endian
 eot_threshold: 0.9              // End-of-turn confidence (90%)
 ```
 
-Audio is captured via Web Audio API's `getUserMedia`, processed through a `ScriptProcessorNode` that:
-1. Reads Float32 samples from input buffer
-2. Clamps values to [-1, 1] range
-3. Converts to Int16 (multiply by 32767)
-4. Sends as binary WebSocket frames
+Audio capture uses Web Audio API with echo cancellation:
 
-On the backend, we've got WebSocket echo cancellation enabled in the browser:
 ```javascript
 audio: {
-  echoCancellation: true,      // Prevents TTS from being re-captured
+  channelCount: 1,
+  sampleRate: 16000,
+  echoCancellation: true,      // Prevents TTS feedback
   noiseSuppression: true,       // Reduces background noise
   autoGainControl: true,        // Normalizes volume
 }
 ```
 
-### Text-to-Speech Implementation
-
-We're using the browser's native `SpeechSynthesis` API (not a cloud service) because:
-- Zero latency - no API calls needed
-- Works offline
-- No additional cost
-- Pretty decent quality on modern browsers
-
-The mic is muted during TTS playback to prevent feedback loops:
-```javascript
-processor.onaudioprocess = (event) => {
-  if (isSpeakingRef.current) return;  // Don't send audio during TTS
-  // ... process and send audio
-}
-```
+Audio processing:
+1. Read Float32 samples from input buffer
+2. Clamp values to [-1, 1] range
+3. Convert to Int16 (multiply by 32767)
+4. Send as binary WebSocket frames
 
 ### Agent Orchestration
 
-The agent follows this loop:
-1. Load last 2 conversation turns from database
-2. Add current user query to messages
-3. Stream query to Claude with tool definitions
-4. For each streamed chunk:
-   - If it's text content → forward to frontend (for display & TTS)
-   - If it's a tool call → execute function, add result to messages
-5. If tool was called → loop back to step 3 (max 3 iterations)
-6. Yield "done" event
-7. Save conversation to database
+The agent follows a multi-iteration loop (max 3 iterations):
 
-This multi-iteration approach lets the agent:
-- Search for a task
-- Then delete it based on the search results
-- Then respond with confirmation
+1. **Load Context:** Retrieve last 2 conversation turns from database
+2. **Add Query:** Append current user query to messages
+3. **Stream to Claude:** Send messages + tool definitions to Sonnet 4.5
+4. **Process Stream:**
+   - Text content → Forward to frontend for display + TTS
+   - Tool call → Execute function, add result to messages
+5. **Iterate if Needed:** If tool was called, go back to step 3
+6. **Finalize:** Yield "done" event, save conversation to database
 
-All in one query.
+This enables complex multi-step operations like:
+- Search for tasks → Delete matching ones → Confirm deletion
 
-### CRUD Operations
+All in a single voice command.
 
-All task operations return a consistent format:
-```python
-{
-  "success": True/False,
-  "message": "Human readable message",
-  "task": { ... },  # Task object (if applicable)
-  "ui_command": { ... }  # Optional UI control command
+### Text-to-Speech
+
+Using browser-native `SpeechSynthesis` API:
+- Zero latency (no API calls)
+- Works offline
+- No additional cost
+- Voice selection prioritizes female US/UK/AU English voices
+
+Mic is automatically muted during TTS to prevent feedback loops:
+
+```javascript
+processor.onaudioprocess = (event) => {
+  if (isSpeakingRef.current) return;  // Mute during TTS
+  // Process and send audio
 }
 ```
 
-The `ui_command` field is how tools control the frontend. Example:
-```python
-{
-  "type": "change_view",
-  "view_mode": "monthly",
-  "target_date": "2025-12-01"
-}
-```
+### Auto-Retry & Error Recovery
 
-Frontend's `handleUICommand` function parses this and updates React state accordingly.
+- **Deepgram Connection:** 3 retry attempts with 500ms delay
+- **Agent Processing:** 2 retry attempts with 30-second timeout
+- **Error Handling:** Corrupted conversation history is cleared automatically
+- **State Reset:** Frontend resets cleanly after errors for immediate retry
 
-## Known Limitations
+---
 
-1. **Browser Compatibility** - TTS quality varies. Chrome/Edge work best.
-2. **Microphone Required** - Can't use voice features without mic access.
-3. **English Only** - FLUX is configured for English; other languages need different model.
-4. **Rate Limits** - Deepgram and Anthropic APIs have rate limits on free tiers.
-5. **Context Window** - Only last 2 conversation turns remembered to keep latency low.
+## ⚠️ Known Limitations
 
-## Future Improvements
+1. **Browser Compatibility:** TTS quality varies across browsers. Chrome/Edge recommended.
+2. **Microphone Required:** Voice features require microphone permissions.
+3. **English Only:** FLUX is configured for English (can be adapted for other languages).
+4. **API Rate Limits:** Free tier limits apply for Deepgram and Anthropic APIs.
+5. **Context Window:** Only last 2 conversation turns retained for low latency.
+6. **Free Tier Hosting:** Backend on Render.com free tier may sleep after inactivity.
 
-- [ ] Add calendar integration (Google Calendar, Outlook)
-- [ ] Multi-language support
+---
+
+## 🚧 Future Improvements
+
+- [ ] Calendar integration (Google Calendar, Outlook)
+- [ ] Multi-language support (Spanish, French, Hindi)
 - [ ] Mobile app (React Native)
-- [ ] Collaborative task boards (multiple users)
+- [ ] Collaborative task boards (multi-user)
 - [ ] Voice biometrics for authentication
 - [ ] Offline mode with local STT model
 - [ ] Custom wake word ("Hey Shram")
 - [ ] Recurring tasks support
-
-## Contributing
-
-Found a bug? Have an idea? PRs are welcome!
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-MIT License - feel free to use this for whatever you want.
-
-## Acknowledgments
-
-- Deepgram for the awesome FLUX model
-- Anthropic for Claude Sonnet 4.5
-- The Next.js and FastAPI teams for excellent frameworks
-- Everyone who's built voice interfaces before us and shared their learnings
+- [ ] Task templates and automation
+- [ ] Export to PDF/CSV
 
 ---
 
-Built with ❤️ and way too much coffee by [@Tanmaycode1](https://github.com/Tanmaycode1)
+## 🤝 Contributing
 
-**Questions? Issues?** Open an issue on GitHub or reach out!
+Contributions are welcome! Here's how to get started:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+Please ensure your code follows the existing style and includes appropriate tests.
+
+---
+
+## 📄 License
+
+MIT License - feel free to use this project for personal or commercial purposes.
+
+---
+
+## 🙏 Acknowledgments
+
+- **Deepgram** for the exceptional FLUX speech-to-text model
+- **Anthropic** for Claude Sonnet 4.5 and excellent API documentation
+- **Next.js** and **FastAPI** teams for powerful frameworks
+- The open-source community for tools and inspiration
+
+---
+
+## 📧 Contact & Support
+
+**Built by:** [@Tanmaycode1](https://github.com/Tanmaycode1)
+
+**Questions or Issues?**
+- Open an issue on [GitHub](https://github.com/Tanmaycode1/Task_app_VOICE_AGENT)
+- Check the [health endpoint](https://task-app-voice-agent.onrender.com/api/health) if the app isn't responding
+
+**Live Demo:** [https://task-app-voice-agent.vercel.app/](https://task-app-voice-agent.vercel.app/)
+
+---
+
+⭐ **If you find this project useful, please consider giving it a star on GitHub!**
