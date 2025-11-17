@@ -232,6 +232,7 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
         
         max_iterations = 3  # Prevent infinite loops and keep latency low
         iteration = 0
+        assistant_response = ""  # Initialize here BEFORE the loop
         all_tool_calls = []
         all_tool_results = []
         
@@ -280,6 +281,7 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                                 # Only stream text if we haven't used tools yet in this iteration
                                 if not iteration_tool_calls:
                                     assistant_response += delta.text
+                                    logger.debug(f"📤 Streaming text: {delta.text}")
                                     yield {
                                         "type": "text",
                                         "content": delta.text,
@@ -367,6 +369,8 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                     
                     if not has_tool_use:
                         # No more tools, we're done
+                        logger.info(f"✅ Query complete. Final response: '{assistant_response}' (length: {len(assistant_response)})")
+                        
                         # Save assistant response to database (with tool calls if any)
                         if assistant_response or all_tool_calls:
                             self._save_message(
@@ -386,11 +390,14 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                             )
                         
                         # Always yield done before returning
+                        logger.info("📤 Sending 'done' event to frontend")
                         yield {"type": "done"}
                         return  # Exit the generator
             
             # If we exit the loop due to max iterations
             if iteration >= max_iterations:
+                logger.warning(f"⚠️ Max iterations ({max_iterations}) reached. Final response: '{assistant_response}'")
+                
                 # Save what we have
                 if assistant_response or all_tool_calls:
                     self._save_message(
@@ -408,12 +415,13 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                         tool_results=all_tool_results,
                     )
                 
-                logger.warning(f"Max iterations ({max_iterations}) reached")
+                logger.info("📤 Sending 'done' event to frontend (max iterations)")
                 yield {"type": "done"}
                 return
                         
         except Exception as e:
-            logger.error(f"Error in process_query: {e}", exc_info=True)
+            logger.error(f"❌ Error in process_query: {e}", exc_info=True)
+            logger.info("📤 Sending error and 'done' events to frontend")
             yield {
                 "type": "error",
                 "error": str(e),

@@ -129,11 +129,25 @@ async def agent_websocket(websocket: WebSocket, db: Session = Depends(get_db)):
                             for retry in range(2):
                                 try:
                                     async def run_agent():
+                                        event_count = 0
                                         async for event in agent.process_query(query):
+                                            event_count += 1
+                                            event_type = event.get("type", "unknown")
+                                            
+                                            # Log what we're sending
+                                            if event_type == "text":
+                                                logger.debug(f"📤 Sending text event: {event.get('content', '')[:50]}")
+                                            elif event_type == "done":
+                                                logger.info(f"📤 Sending 'done' event (total events: {event_count})")
+                                            elif event_type == "tool_result":
+                                                logger.info(f"📤 Sending tool_result for: {event.get('tool')}")
+                                            
                                             await websocket.send_text(json.dumps({
                                                 "type": "agent_event",
                                                 "data": event
                                             }))
+                                        
+                                        logger.info(f"✅ Agent processing complete. Sent {event_count} events total")
                                     
                                     await asyncio.wait_for(run_agent(), timeout=30.0)
                                     break  # Success
