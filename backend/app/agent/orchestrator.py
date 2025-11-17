@@ -235,14 +235,15 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
         all_tool_calls = []
         all_tool_results = []
         
-        while iteration < max_iterations:
-            iteration += 1
-            
-            # Reset response for this iteration
-            assistant_response = ""
-            
-            # Stream response from Claude
-            try:
+        try:
+            while iteration < max_iterations:
+                iteration += 1
+                
+                # Reset response for this iteration
+                iteration_response = ""
+                iteration_tool_calls = []
+                
+                # Stream response from Claude
                 with self.client.messages.stream(
                     model=self.model,
                     max_tokens=1024,  # Reduced for faster, more concise responses
@@ -273,13 +274,16 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                         elif event.type == "content_block_delta":
                             delta = event.delta
                             
-                            # Text content
+                            # Text content - only yield if there are NO tool calls in this iteration
                             if hasattr(delta, "type") and delta.type == "text_delta":
-                                assistant_response += delta.text
-                                yield {
-                                    "type": "text",
-                                    "content": delta.text,
-                                }
+                                iteration_response += delta.text
+                                # Only stream text if we haven't used tools yet in this iteration
+                                if not iteration_tool_calls:
+                                    assistant_response += delta.text
+                                    yield {
+                                        "type": "text",
+                                        "content": delta.text,
+                                    }
                             
                             # Tool input delta
                             elif hasattr(delta, "type") and delta.type == "input_json_delta":
@@ -311,6 +315,7 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                                 }
                                 
                                 # Track tool calls and results for saving
+                                iteration_tool_calls.append(current_tool_use["name"])
                                 all_tool_calls.append({
                                     "id": current_tool_use["id"],
                                     "name": current_tool_use["name"],
@@ -349,7 +354,7 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                                 
                                 current_tool_use = None
                                 current_tool_input = ""
-                    
+                
                     # Get final message
                     final_message = stream.get_final_message()
                     
@@ -380,22 +385,42 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                                 tool_results=all_tool_results,
                             )
                         
+                        # Always yield done before returning
                         yield {"type": "done"}
-                        break
+                        return  # Exit the generator
+            
+            # If we exit the loop due to max iterations
+            if iteration >= max_iterations:
+                # Save what we have
+                if assistant_response or all_tool_calls:
+                    self._save_message(
+                        role="assistant",
+                        content=assistant_response,
+                        tool_calls=all_tool_calls if all_tool_calls else None,
+                        tool_results=None,
+                    )
+                
+                if all_tool_results:
+                    self._save_message(
+                        role="user",
+                        content="",
+                        tool_calls=None,
+                        tool_results=all_tool_results,
+                    )
+                
+                logger.warning(f"Max iterations ({max_iterations}) reached")
+                yield {"type": "done"}
+                return
                         
-            except Exception as e:
-                yield {
-                    "type": "error",
-                    "error": str(e),
-                }
-                break
-        
-        if iteration >= max_iterations:
-            # Safety stop: we've already tried several tool passes.
-            # Don't surface a noisy error to the user; just end this turn.
+        except Exception as e:
+            logger.error(f"Error in process_query: {e}", exc_info=True)
             yield {
-                "type": "done",
+                "type": "error",
+                "error": str(e),
             }
+            # Always ensure done is sent even on error
+            yield {"type": "done"}
+            return
 
 
     def process_query_sync(self, user_query: str) -> dict[str, Any]:
