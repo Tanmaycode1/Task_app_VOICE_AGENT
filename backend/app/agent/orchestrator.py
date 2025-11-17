@@ -39,6 +39,7 @@ CRITICAL RULES:
 2. BE EXTREMELY CONCISE - Maximum 3-5 words per response (will be spoken aloud)
 3. DON'T reference conversation history unless explicitly asked
 4. If a task matches (date + description), update/delete it immediately without asking
+5. **SINGLE RESPONSE ONLY** - Call tool(s) AND provide final text response in ONE message, not separate iterations
 
 RESPONSE FORMATS (ALWAYS use these):
 - Task created → "Done"
@@ -47,6 +48,12 @@ RESPONSE FORMATS (ALWAYS use these):
 - View changed → "Showing [month/week/day]"
 - Multiple matches → "Which one: A, B, or C?"
 - Error → "Can't do that"
+
+EFFICIENT TOOL USE:
+- When calling a tool, IMMEDIATELY provide your final response text in the SAME message
+- Example: [call change_ui_view tool] + "Showing December" ← ALL IN ONE RESPONSE
+- DON'T call a tool, then think, then respond - do it ALL AT ONCE
+- If you need multiple tools, call them all together, then respond once
 
 TASK OPERATIONS:
 
@@ -359,13 +366,50 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                         if hasattr(block, "type")
                     )
                     
-                    if not has_tool_use:
-                        # No more tools, this is the FINAL iteration - now stream the text
-                        if iteration_text:
+                    # Check if this response has BOTH text and tool calls
+                    # If so, this should be the final response (efficient single-turn completion)
+                    has_text = bool(iteration_text.strip())
+                    
+                    if iteration_tool_calls and has_text:
+                        # Efficient! Tool call(s) + response text in ONE iteration
+                        assistant_response = iteration_text
+                        logger.info(f"⚡ Single-turn completion! Tool(s): {iteration_tool_calls} + Text: '{assistant_response}'")
+                        
+                        # Stream the text now
+                        for char in iteration_text:
+                            yield {
+                                "type": "text",
+                                "content": char,
+                            }
+                        
+                        # Save and done
+                        if assistant_response or all_tool_calls:
+                            self._save_message(
+                                role="assistant",
+                                content=assistant_response,
+                                tool_calls=all_tool_calls if all_tool_calls else None,
+                                tool_results=None,
+                            )
+                        
+                        if all_tool_results:
+                            self._save_message(
+                                role="user",
+                                content="",
+                                tool_calls=None,
+                                tool_results=all_tool_results,
+                            )
+                        
+                        logger.info("📤 Sending 'done' event to frontend (single-turn)")
+                        yield {"type": "done"}
+                        return
+                    
+                    elif not has_tool_use:
+                        # No more tools, this is the FINAL iteration - stream the text
+                        if has_text:
                             assistant_response = iteration_text
                             logger.info(f"✅ Final iteration. Streaming text: '{assistant_response}' (length: {len(assistant_response)})")
                             
-                            # Stream text word by word for better UX
+                            # Stream text character by character
                             for char in iteration_text:
                                 yield {
                                     "type": "text",
