@@ -74,7 +74,7 @@ export default function Home() {
         }
       }
 
-      const params: any = { limit: 500 };
+      const params: Record<string, string | number> = { limit: 500 };
       if (startDate) params.start_date = startDate.toISOString();
       if (endDate) params.end_date = endDate.toISOString();
       if (statusFilter !== 'all') params.status = statusFilter;
@@ -85,12 +85,13 @@ export default function Home() {
         fetchTaskStats(),
       ]);
 
-      let sortedTasks = [...tasksRes.tasks];
+      const sortedTasks = [...tasksRes.tasks];
       
       // Sort tasks for list view
       if (viewMode === 'list') {
         sortedTasks.sort((a, b) => {
-          let aVal: any, bVal: any;
+          let aVal: string | number;
+          let bVal: string | number;
           
           if (sortField === 'priority') {
             aVal = PRIORITY_ORDER[a.priority as keyof typeof PRIORITY_ORDER];
@@ -490,7 +491,7 @@ export default function Home() {
         {searchResultIds && (
           <div className="mb-4 rounded-lg bg-blue-50 dark:bg-blue-900/20 px-4 py-3 flex items-center justify-between">
             <div className="text-sm text-blue-900 dark:text-blue-100">
-              <span className="font-medium">Search results for "{searchQuery}"</span>
+              <span className="font-medium">Search results for &ldquo;{searchQuery}&rdquo;</span>
               <span className="ml-2 text-blue-700 dark:text-blue-300">
                 ({displayTasks.length} {displayTasks.length === 1 ? 'task' : 'tasks'} found)
               </span>

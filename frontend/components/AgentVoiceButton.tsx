@@ -2,9 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+type UICommand = {
+  type: string;
+  view_mode?: string;
+  target_date?: string;
+  sort_by?: string;
+  sort_order?: string;
+  filter_status?: string;
+  filter_priority?: string;
+  search_results?: number[];
+  search_query?: string;
+};
+
 type AgentVoiceButtonProps = {
   onTasksUpdated?: () => void;
-  onUICommand?: (command: any) => void;
+  onUICommand?: (command: UICommand) => void;
 };
 
 export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButtonProps) {
@@ -22,21 +34,6 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
   const [isSpeaking, setIsSpeaking] = useState(false);
 
   const baseUrl = process.env.NEXT_PUBLIC_AGENT_WS_URL ?? 'ws://localhost:8000/api/agent';
-
-  useEffect(() => {
-    // Load TTS voices
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.getVoices();
-      window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
-    }
-    
-    return cleanup;
-  }, []);
-
-  // Keep speaking ref in sync
-  useEffect(() => {
-    isSpeakingRef.current = isSpeaking;
-  }, [isSpeaking]);
 
   // Text-to-Speech
   const speak = useCallback((text: string) => {
@@ -100,7 +97,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
   }, []);
 
   // Cleanup
-  function cleanup() {
+  const cleanup = useCallback(() => {
     stopSpeaking();
     
     if (processorRef.current) {
@@ -122,7 +119,22 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
       wsRef.current.close();
       wsRef.current = null;
     }
-  }
+  }, [stopSpeaking]);
+
+  // Load TTS voices on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+    }
+    
+    return cleanup;
+  }, [cleanup]);
+
+  // Keep speaking ref in sync
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
 
   // Start agent
   const handleStart = useCallback(async () => {
@@ -281,7 +293,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
       });
       mediaStreamRef.current = stream;
 
-      const AudioContextCtor = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+      const AudioContextCtor = (window.AudioContext || (window as Window & typeof globalThis & { webkitAudioContext: typeof AudioContext }).webkitAudioContext) as typeof AudioContext;
       const audioContext = new AudioContextCtor({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
 
@@ -315,7 +327,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
       console.error('❌ Start failed:', err);
       cleanup();
     }
-  }, [baseUrl, speak, stopSpeaking, onTasksUpdated, onUICommand, isProcessing, isSpeaking]);
+  }, [baseUrl, speak, stopSpeaking, onTasksUpdated, onUICommand, isProcessing, isSpeaking, cleanup]);
 
   // Stop agent
   const handleStop = useCallback(() => {
@@ -325,7 +337,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
     setCurrentTranscript('');
     setAgentResponse('');
     setToolActivity('');
-  }, []);
+  }, [cleanup]);
 
   return (
     <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-3">
