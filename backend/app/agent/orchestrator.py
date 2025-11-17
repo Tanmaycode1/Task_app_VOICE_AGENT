@@ -83,7 +83,9 @@ UPDATE (Single or Multiple):
   * "next week" = EXACTLY +7 days from current deadline
   * "next month" = EXACTLY +30 days from current deadline
   * Be precise with date arithmetic
-- **IMPORTANT: After updating tasks, DO NOT change the view/screen**
+- **AUTO-NAVIGATION**: When deadline changes significantly (week/month shift), UI automatically navigates to new date
+  * You DON'T need to call change_ui_view manually for date updates
+  * The tools handle navigation automatically
 
 SEARCH & FILTER:
 - "Show me administrative tasks" → search_tasks(query="administrative") + UI shows results

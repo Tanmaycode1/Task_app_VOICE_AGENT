@@ -415,6 +415,10 @@ def _update_task(
     if not task:
         return {"success": False, "error": f"Task with ID {task_id} not found"}
     
+    # Track if deadline changed and by how much
+    original_deadline = task.deadline
+    deadline_changed = False
+    
     if title is not None:
         task.title = title
     if description is not None:
@@ -436,12 +440,14 @@ def _update_task(
             if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
                 parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
             task.deadline = parsed_deadline
+            deadline_changed = True
         except ValueError:
             # If ISO format fails, try to parse date only and add 12:00 PM
             try:
                 from datetime import date
                 date_only = date.fromisoformat(deadline)
                 task.deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
+                deadline_changed = True
             except ValueError:
                 pass
     
@@ -461,8 +467,27 @@ def _update_task(
         },
     }
     
-    # DO NOT automatically navigate to the task's date
-    # User must explicitly ask to see that date
+    # If deadline changed significantly (moved to different week/month), navigate to new date
+    if deadline_changed and original_deadline and task.deadline:
+        days_diff = abs((task.deadline - original_deadline).days)
+        
+        # Only navigate if moved by at least 3 days (significant change)
+        if days_diff >= 3:
+            target_date = task.deadline.date().isoformat()
+            
+            # Determine view mode based on how much it shifted
+            if days_diff >= 25:  # ~1 month
+                view_mode = "monthly"
+            elif days_diff >= 6:  # ~1 week
+                view_mode = "weekly"
+            else:
+                view_mode = "daily"
+            
+            result["ui_command"] = {
+                "type": "change_view",
+                "view_mode": view_mode,
+                "target_date": target_date,
+            }
     
     return result
 
@@ -757,11 +782,34 @@ def _update_multiple_tasks(
     
     db.commit()
     
-    return {
+    result = {
         "success": True,
         "message": f"{len(updated_tasks)} tasks updated successfully",
         "tasks": updated_tasks,
     }
+    
+    # If we shifted deadlines, navigate to the new date/week/month
+    if deadline_shift_days is not None and updated_tasks:
+        # Get the first updated task's new deadline to determine where to navigate
+        first_updated = db.query(Task).filter(Task.id == updated_tasks[0]["id"]).first()
+        if first_updated and first_updated.deadline:
+            target_date = first_updated.deadline.date().isoformat()
+            
+            # Determine view mode based on shift amount
+            if abs(deadline_shift_days) >= 25:  # ~1 month
+                view_mode = "monthly"
+            elif abs(deadline_shift_days) >= 6:  # ~1 week
+                view_mode = "weekly"
+            else:
+                view_mode = "daily"
+            
+            result["ui_command"] = {
+                "type": "change_view",
+                "view_mode": view_mode,
+                "target_date": target_date,
+            }
+    
+    return result
 
 
 def _delete_multiple_tasks(db: Session, task_ids: list[int]) -> dict[str, Any]:
