@@ -204,58 +204,58 @@ With increased token limits (2048 tokens), the model can handle complex bulk ope
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         FRONTEND (Next.js)                       │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  AgentVoiceButton Component                              │  │
-│  │  • Captures mic audio (Web Audio API)                   │  │
-│  │  • Converts to PCM16 format                             │  │
-│  │  • Streams to backend via WebSocket                     │  │
-│  │  • Displays transcripts & agent responses               │  │
-│  │  • Text-to-Speech for agent replies                     │  │
-│  │  • Handles UI commands from agent                       │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                             │                                    │
-│                             │ WebSocket                          │
-│                             ▼                                    │
+│                         FRONTEND (Next.js)                      │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  AgentVoiceButton Component                              │   │
+│  │  • Captures mic audio (Web Audio API)                    │   │
+│  │  • Converts to PCM16 format                              │   │
+│  │  • Streams to backend via WebSocket                      │   │
+│  │  • Displays transcripts & agent responses                │   │
+│  │  • Text-to-Speech for agent replies                      │   │
+│  │  • Handles UI commands from agent                        │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                             │                                   │
+│                             │ WebSocket                         │
+│                             ▼                                   │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                      BACKEND (FastAPI)                          │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Agent WebSocket Handler (/api/agent)                   │  │
-│  │  • Receives audio stream from frontend                  │  │
-│  │  • Forwards to Deepgram FLUX via WebSocket              │  │
-│  │  • On turn detection → triggers agent                   │  │
-│  │  • Streams agent events back to frontend                │  │
-│  │  • Auto-retry on failures (2 attempts)                  │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                             │                                    │
-│                             ▼                                    │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Task Agent (orchestrator.py)                           │  │
-│  │  • Loads conversation history (last 2 turns)            │  │
-│  │  • Streams query to Claude Sonnet 4.5                   │  │
-│  │  • Executes tool calls (CRUD operations)                │  │
-│  │  • Yields events: thinking, tool_use, text, done        │  │
-│  │  • Max 3 iterations, 2048 token limit                   │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                             │                                    │
-│                             ▼                                    │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Tools (tools.py)                                        │  │
-│  │  • create_task / create_multiple_tasks                  │  │
-│  │  • update_task / update_multiple_tasks                  │  │
-│  │  • delete_task / delete_multiple_tasks                  │  │
-│  │  • list_tasks / search_tasks / get_task_stats           │  │
-│  │  • change_ui_view (sends UI commands)                   │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                             │                                    │
-│                             ▼                                    │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  SQLite Database                                         │  │
-│  │  • Tasks table (id, title, deadline, priority, etc.)    │  │
-│  │  • ConversationMessage table (for history)              │  │
-│  └──────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Agent WebSocket Handler (/api/agent)                    │   │
+│  │  • Receives audio stream from frontend                   │   │
+│  │  • Forwards to Deepgram FLUX via WebSocket               │   │
+│  │  • On turn detection → triggers agent                    │   │
+│  │  • Streams agent events back to frontend                 │   │
+│  │  • Auto-retry on failures (2 attempts)                   │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Task Agent (orchestrator.py)                            │   │
+│  │  • Loads conversation history (last 2 turns)             │   │
+│  │  • Streams query to Claude Sonnet 4.5                    │   │
+│  │  • Executes tool calls (CRUD operations)                 │   │
+│  │  • Yields events: thinking, tool_use, text, done         │   │
+│  │  • Max 3 iterations, 2048 token limit                    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Tools (tools.py)                                        │   │
+│  │  • create_task / create_multiple_tasks                   │   │
+│  │  • update_task / update_multiple_tasks                   │   │
+│  │  • delete_task / delete_multiple_tasks                   │   │
+│  │  • list_tasks / search_tasks / get_task_stats            │   │
+│  │  • change_ui_view (sends UI commands)                    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                             │                                   │
+│                             ▼                                   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  SQLite Database                                         │   │
+│  │  • Tasks table (id, title, deadline, priority, etc.)     │   │
+│  │  • ConversationMessage table (for history)               │   │
+│  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 
         ▲                                    ▲
