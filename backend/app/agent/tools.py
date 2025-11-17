@@ -10,6 +10,87 @@ from app.models.task import Task, TaskPriority, TaskStatus
 # Tool schemas for Claude
 TOOLS = [
     {
+        "name": "create_multiple_tasks",
+        "description": "Create multiple tasks at once. Use this when user wants to add several tasks in one command.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "description": "Array of tasks to create",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Task title (required)"},
+                            "description": {"type": "string", "description": "Task description"},
+                            "notes": {"type": "string", "description": "Additional notes"},
+                            "priority": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high", "urgent"],
+                                "description": "Priority level (default: medium)",
+                            },
+                            "deadline": {"type": "string", "description": "Deadline in ISO 8601 format"},
+                        },
+                        "required": ["title"],
+                    },
+                },
+            },
+            "required": ["tasks"],
+        },
+    },
+    {
+        "name": "update_multiple_tasks",
+        "description": "Update multiple tasks at once. Use when user wants to bulk update (e.g., 'push all tasks to next week').",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "IDs of tasks to update (required)",
+                },
+                "updates": {
+                    "type": "object",
+                    "description": "Updates to apply to all specified tasks",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "notes": {"type": "string"},
+                        "priority": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high", "urgent"],
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": ["todo", "in_progress", "completed", "cancelled"],
+                        },
+                        "deadline": {"type": "string", "description": "New deadline in ISO 8601"},
+                        "deadline_shift_days": {
+                            "type": "integer",
+                            "description": "Shift deadline by N days (e.g., 7 for next week, 30 for next month)",
+                        },
+                    },
+                },
+            },
+            "required": ["task_ids", "updates"],
+        },
+    },
+    {
+        "name": "delete_multiple_tasks",
+        "description": "Delete multiple tasks at once. Use when user wants to bulk delete tasks.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "IDs of tasks to delete (required)",
+                },
+            },
+            "required": ["task_ids"],
+        },
+    },
+    {
         "name": "list_tasks",
         "description": "List all tasks with optional filters. Use this to show the user their tasks or search for specific tasks.",
         "input_schema": {
@@ -205,10 +286,16 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], db: Session) -> dic
         return _list_tasks(db, **tool_input)
     elif tool_name == "create_task":
         return _create_task(db, **tool_input)
+    elif tool_name == "create_multiple_tasks":
+        return _create_multiple_tasks(db, **tool_input)
     elif tool_name == "update_task":
         return _update_task(db, **tool_input)
+    elif tool_name == "update_multiple_tasks":
+        return _update_multiple_tasks(db, **tool_input)
     elif tool_name == "delete_task":
         return _delete_task(db, **tool_input)
+    elif tool_name == "delete_multiple_tasks":
+        return _delete_multiple_tasks(db, **tool_input)
     elif tool_name == "get_task_stats":
         return _get_task_stats(db)
     elif tool_name == "search_tasks":
@@ -528,4 +615,186 @@ def _change_ui_view(
             result["message"] += f", filtered by priority: {filter_priority}"
     
     return result
+
+
+def _create_multiple_tasks(db: Session, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Create multiple tasks at once."""
+    created_tasks = []
+    errors = []
+    
+    for i, task_data in enumerate(tasks):
+        try:
+            # Parse deadline and set default time to 12:00 PM if only date is provided
+            parsed_deadline = None
+            deadline = task_data.get("deadline")
+            if deadline:
+                try:
+                    parsed_deadline = datetime.fromisoformat(deadline)
+                    # If time is exactly midnight (00:00:00), it means only date was provided
+                    # Set default time to 12:00 PM (noon)
+                    if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
+                        parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
+                except ValueError:
+                    # If ISO format fails, try to parse date only and add 12:00 PM
+                    try:
+                        from datetime import date
+                        date_only = date.fromisoformat(deadline)
+                        parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
+                    except ValueError:
+                        parsed_deadline = None
+            
+            task = Task(
+                title=task_data["title"],
+                description=task_data.get("description"),
+                notes=task_data.get("notes"),
+                priority=task_data.get("priority", "medium"),
+                status=TaskStatus.TODO.value,
+                deadline=parsed_deadline,
+            )
+            
+            db.add(task)
+            db.flush()  # Get task ID without committing
+            
+            created_tasks.append({
+                "id": task.id,
+                "title": task.title,
+                "priority": task.priority,
+                "deadline": task.deadline.isoformat() if task.deadline else None,
+            })
+        except Exception as e:
+            errors.append(f"Task {i+1} ('{task_data.get('title', 'Unknown')}'): {str(e)}")
+    
+    if errors:
+        db.rollback()
+        return {
+            "success": False,
+            "error": f"Failed to create tasks. Errors: {'; '.join(errors)}",
+        }
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": f"{len(created_tasks)} tasks created successfully",
+        "tasks": created_tasks,
+    }
+
+
+def _update_multiple_tasks(
+    db: Session,
+    task_ids: list[int],
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    """Update multiple tasks at once."""
+    updated_tasks = []
+    errors = []
+    
+    # Handle deadline_shift_days for bulk date shifting
+    deadline_shift_days = updates.pop("deadline_shift_days", None)
+    
+    for task_id in task_ids:
+        try:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            
+            if not task:
+                errors.append(f"Task ID {task_id} not found")
+                continue
+            
+            # Apply updates
+            if "title" in updates:
+                task.title = updates["title"]
+            if "description" in updates:
+                task.description = updates["description"]
+            if "notes" in updates:
+                task.notes = updates["notes"]
+            if "priority" in updates:
+                task.priority = updates["priority"]
+            if "status" in updates:
+                task.status = updates["status"]
+                if updates["status"] == TaskStatus.COMPLETED.value and not task.completed_at:
+                    task.completed_at = datetime.utcnow()
+            
+            # Handle deadline update or shift
+            if deadline_shift_days is not None and task.deadline:
+                # Shift existing deadline by N days
+                task.deadline = task.deadline + timedelta(days=deadline_shift_days)
+            elif "deadline" in updates:
+                # Set new absolute deadline
+                deadline_str = updates["deadline"]
+                try:
+                    parsed_deadline = datetime.fromisoformat(deadline_str)
+                    # If time is exactly midnight (00:00:00), it means only date was provided
+                    if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
+                        parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
+                    task.deadline = parsed_deadline
+                except ValueError:
+                    try:
+                        from datetime import date
+                        date_only = date.fromisoformat(deadline_str)
+                        task.deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
+                    except ValueError:
+                        pass
+            
+            task.updated_at = datetime.utcnow()
+            
+            updated_tasks.append({
+                "id": task.id,
+                "title": task.title,
+                "priority": task.priority,
+                "status": task.status,
+                "deadline": task.deadline.isoformat() if task.deadline else None,
+            })
+        except Exception as e:
+            errors.append(f"Task ID {task_id}: {str(e)}")
+    
+    if errors:
+        db.rollback()
+        return {
+            "success": False,
+            "error": f"Failed to update some tasks. Errors: {'; '.join(errors)}",
+            "updated": updated_tasks,
+        }
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": f"{len(updated_tasks)} tasks updated successfully",
+        "tasks": updated_tasks,
+    }
+
+
+def _delete_multiple_tasks(db: Session, task_ids: list[int]) -> dict[str, Any]:
+    """Delete multiple tasks at once."""
+    deleted_tasks = []
+    errors = []
+    
+    for task_id in task_ids:
+        try:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            
+            if not task:
+                errors.append(f"Task ID {task_id} not found")
+                continue
+            
+            deleted_tasks.append({"id": task.id, "title": task.title})
+            db.delete(task)
+        except Exception as e:
+            errors.append(f"Task ID {task_id}: {str(e)}")
+    
+    if errors:
+        db.rollback()
+        return {
+            "success": False,
+            "error": f"Failed to delete some tasks. Errors: {'; '.join(errors)}",
+            "deleted": deleted_tasks,
+        }
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": f"{len(deleted_tasks)} tasks deleted successfully",
+        "tasks": deleted_tasks,
+    }
 

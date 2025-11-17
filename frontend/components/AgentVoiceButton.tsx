@@ -227,7 +227,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
               }
               
               // Refresh UI only for write operations
-              if (['create_task', 'update_task', 'delete_task'].includes(event.tool)) {
+              if (['create_task', 'create_multiple_tasks', 'update_task', 'update_multiple_tasks', 'delete_task', 'delete_multiple_tasks'].includes(event.tool)) {
                 onTasksUpdated?.();
               }
             }
