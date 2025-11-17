@@ -241,7 +241,7 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                 iteration += 1
                 
                 # Reset response for this iteration
-                iteration_response = ""
+                iteration_text = ""  # Accumulate text for this iteration
                 iteration_tool_calls = []
                 
                 # Stream response from Claude
@@ -275,17 +275,9 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                         elif event.type == "content_block_delta":
                             delta = event.delta
                             
-                            # Text content - only yield if there are NO tool calls in this iteration
+                            # Text content - accumulate but DON'T stream yet (we'll stream on final iteration)
                             if hasattr(delta, "type") and delta.type == "text_delta":
-                                iteration_response += delta.text
-                                # Only stream text if we haven't used tools yet in this iteration
-                                if not iteration_tool_calls:
-                                    assistant_response += delta.text
-                                    logger.debug(f"📤 Streaming text: {delta.text}")
-                                    yield {
-                                        "type": "text",
-                                        "content": delta.text,
-                                    }
+                                iteration_text += delta.text
                             
                             # Tool input delta
                             elif hasattr(delta, "type") and delta.type == "input_json_delta":
@@ -368,8 +360,19 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                     )
                     
                     if not has_tool_use:
-                        # No more tools, we're done
-                        logger.info(f"✅ Query complete. Final response: '{assistant_response}' (length: {len(assistant_response)})")
+                        # No more tools, this is the FINAL iteration - now stream the text
+                        if iteration_text:
+                            assistant_response = iteration_text
+                            logger.info(f"✅ Final iteration. Streaming text: '{assistant_response}' (length: {len(assistant_response)})")
+                            
+                            # Stream text word by word for better UX
+                            for char in iteration_text:
+                                yield {
+                                    "type": "text",
+                                    "content": char,
+                                }
+                        else:
+                            logger.info(f"✅ Query complete. No text response (tools only).")
                         
                         # Save assistant response to database (with tool calls if any)
                         if assistant_response or all_tool_calls:
