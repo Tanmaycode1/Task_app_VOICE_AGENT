@@ -49,8 +49,40 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
     utterance.pitch = 1.0;
     
     const voices = window.speechSynthesis.getVoices();
-    const voice = voices.find(v => v.lang.startsWith('en-') && v.localService) || voices[0];
-    if (voice) utterance.voice = voice;
+    
+    // Voice selection priority:
+    // 1. Female voices (prefer "female" in name)
+    // 2. US/UK/AU English (avoid Indian accent)
+    // 3. Local/offline voices (faster, more reliable)
+    
+    const preferredVoice = 
+      // Try female US/UK voices first
+      voices.find(v => 
+        (v.lang === 'en-US' || v.lang === 'en-GB' || v.lang === 'en-AU') && 
+        (v.name.toLowerCase().includes('female') || 
+         v.name.toLowerCase().includes('samantha') ||
+         v.name.toLowerCase().includes('karen') ||
+         v.name.toLowerCase().includes('victoria'))
+      ) ||
+      // Any female English voice
+      voices.find(v => 
+        v.lang.startsWith('en-') && 
+        (v.name.toLowerCase().includes('female') || 
+         v.name.toLowerCase().includes('woman'))
+      ) ||
+      // Any US/UK/AU voice (no Indian accent)
+      voices.find(v => 
+        (v.lang === 'en-US' || v.lang === 'en-GB' || v.lang === 'en-AU') &&
+        !v.name.toLowerCase().includes('india')
+      ) ||
+      // Fallback to any English voice
+      voices.find(v => v.lang.startsWith('en-')) ||
+      voices[0];
+    
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
+      console.log(`🔊 Using voice: ${preferredVoice.name} (${preferredVoice.lang})`);
+    }
     
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => setIsSpeaking(false);
