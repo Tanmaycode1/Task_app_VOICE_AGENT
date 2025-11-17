@@ -475,27 +475,7 @@ processor.onaudioprocess = (event) => {
 - [ ] Task templates and automation
 - [ ] Export to PDF/CSV
 
----
 
-## 🤝 Contributing
-
-Contributions are welcome! Here's how to get started:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-Please ensure your code follows the existing style and includes appropriate tests.
-
----
-
-## 📄 License
-
-MIT License - feel free to use this project for personal or commercial purposes.
-
----
 
 ## 🙏 Acknowledgments
 
@@ -503,19 +483,3 @@ MIT License - feel free to use this project for personal or commercial purposes.
 - **Anthropic** for Claude Sonnet 4.5 and excellent API documentation
 - **Next.js** and **FastAPI** teams for powerful frameworks
 - The open-source community for tools and inspiration
-
----
-
-## 📧 Contact & Support
-
-**Built by:** [@Tanmaycode1](https://github.com/Tanmaycode1)
-
-**Questions or Issues?**
-- Open an issue on [GitHub](https://github.com/Tanmaycode1/Task_app_VOICE_AGENT)
-- Check the [health endpoint](https://task-app-voice-agent.onrender.com/api/health) if the app isn't responding
-
-**Live Demo:** [https://task-app-voice-agent.vercel.app/](https://task-app-voice-agent.vercel.app/)
-
----
-
-⭐ **If you find this project useful, please consider giving it a star on GitHub!**
