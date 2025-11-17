@@ -66,140 +66,83 @@ Shram.ai is a next-generation task management application that lets you control 
 ## ✨ Key Features
 
 ### 1. Natural Language Task Management
-
-Create, update, and delete tasks using everyday language:
-
-```
-✅ Task Creation
-- "Add a task to review the backend API by Friday"
-- "I need to call the client tomorrow at 2 PM"
-- "Create an urgent task for the production bug fix"
-
-✅ Task Updates
-- "Push that meeting to next week"
-- "Mark the report task as complete"
-- "Change the presentation to high priority"
-- "Move all tasks to next month"
-
-✅ Task Deletion
-- "Delete the task about the old feature"
-- "Remove the 3rd task"
-- "Cancel that compliance thing"
-```
+Create, update, and delete tasks using conversational language. The AI understands context and infers details like priority and deadlines from your phrasing.
 
 ### 2. Voice-Controlled UI Navigation
-
-The AI agent switches views and applies filters automatically:
-
-```
-✅ View Switching
-- "Show me December tasks" → Switches to monthly view for December
-- "Take me to next week" → Opens weekly view for next week
-- "Show all tasks" → Switches to list view
-
-✅ Filter Application
-- "Show me urgent tasks" → Applies priority filter
-- "Show tasks sorted by deadline" → Sorts list view
-- "Show completed tasks" → Filters by status
-- "Show me administrative tasks" → Searches and displays results
-```
+The AI agent directly controls the interface—switching views, applying filters, and navigating to dates based on your voice commands. No clicking required.
 
 ### 3. Smart Search & Display
-
-Search results are displayed visually in the UI:
-
-```
-✅ Search Commands
-- "Show me all administrative tasks" → Displays filtered list
-- "Find tasks related to client meeting" → Shows matching tasks
-- "What tasks mention the new feature?" → Displays search results
-
-The UI automatically switches to list view and shows a banner:
-"Search results for 'administrative' (3 tasks found)"
-```
+Search results are visually displayed in the UI with a dedicated search banner, making it easy to see exactly what the agent found.
 
 ### 4. Bulk Operations
-
-Perform actions on multiple tasks at once:
-
-```
-✅ Bulk Updates
-- "Push all tasks to next week" → Shifts all deadlines by 7 days
-- "Move all meetings to next month" → Bulk deadline update
-- "Mark all admin tasks as completed" → Bulk status update
-
-✅ Bulk Creation
-- "Add 3 tasks: meeting, code review, testing" → Creates multiple tasks
-
-✅ Bulk Deletion
-- "Delete all meeting tasks" → Removes all matching tasks
-```
+Perform actions on multiple tasks simultaneously—create several tasks at once, update all deadlines, or delete groups of tasks with a single command.
 
 ### 5. Automatic Date Navigation
-
-When you update task dates, the UI automatically navigates to show them:
-
-```
-✅ Smart Navigation
-- "Push meeting to next week" → Updates task + shows weekly view
-- "Move to December 15th" → Updates task + shows December
-- "Reschedule to next month" → Updates task + shows monthly view
-```
+When you reschedule tasks, the UI automatically jumps to show the new date in the appropriate view (daily/weekly/monthly).
 
 ### 6. Context-Aware Commands
-
-The agent remembers recent conversations:
-
-```
-You: "Add a task for the presentation"
-Agent: "Done"
-You: "Make it urgent" ← Agent knows you mean the presentation task
-```
+The agent remembers your last 2 interactions, allowing follow-up commands like "make it urgent" after creating a task.
 
 ---
 
 ## 🎙️ Sample Voice Commands
 
-### Task Management
+### Creating Tasks
 
-| Command | Action |
-|---------|--------|
-| "Add a task to finish the API documentation by Friday" | Creates task with deadline |
-| "I want to work on the frontend tomorrow" | Creates task for tomorrow |
-| "Make me an urgent task for the bug fix" | Creates high-priority task |
-| "Push the deployment task to next week" | Updates deadline (+7 days) |
-| "Mark the report as complete" | Updates task status |
-| "Delete the task about compliance" | Removes matching task |
-| "Cancel that meeting task" | Deletes task |
+| Say This | What Happens |
+|----------|--------------|
+| "Add a task to review the quarterly financial report by this Friday at 3 PM" | Creates task with title, deadline (Friday 3 PM), default medium priority |
+| "I need to call the dentist tomorrow morning" | Creates task for tomorrow at 12 PM (default time) |
+| "Create an urgent task for fixing the production database connection error" | Creates high-priority task with inferred urgency |
+| "Make me a task to prepare slides for the client presentation next Monday" | Creates task for next Monday at 12 PM |
+| "Add a task to buy groceries" | Creates simple task with no deadline |
 
-### Navigation & Views
+### Updating Tasks
 
-| Command | Action |
-|---------|--------|
-| "Show me December tasks" | Monthly view for December 2025 |
-| "Take me to next week" | Weekly view for next week |
-| "Go to November 25th" | Daily view for Nov 25 |
-| "Show all tasks" | List view with all tasks |
-| "Show me the weekly view" | Switches to weekly view |
+| Say This | What Happens |
+|----------|--------------|
+| "Push the deployment task to next Wednesday" | Finds task about deployment, updates deadline to next Wednesday, keeps original time |
+| "Move the client meeting to Monday" | Reschedules to nearest upcoming Monday, navigates to that date in calendar |
+| "Mark the quarterly report as complete" | Updates task status to completed |
+| "Change the presentation task to high priority" | Updates priority level |
+| "Reschedule the database backup to next Friday at 11 PM" | Updates deadline with specific time |
 
-### Search & Filters
+### Deleting Tasks
 
-| Command | Action |
-|---------|--------|
-| "Show me administrative tasks" | Searches + displays results |
-| "Show urgent tasks" | Filters by urgent priority |
-| "Show tasks sorted by deadline" | List view sorted by deadline |
-| "Show completed tasks" | Filters by completed status |
-| "What tasks are in progress?" | Filters by in-progress status |
+| Say This | What Happens |
+|----------|--------------|
+| "Delete the task about the old marketing campaign" | Searches for matching task, deletes if one clear match found |
+| "Remove the third task from the list" | Deletes task at position 3 in current view |
+| "Cancel that compliance audit task" | Searches and removes matching task |
+| "Delete all meeting-related tasks" | Bulk deletes all tasks matching "meeting" |
 
-### Bulk Operations
+### Navigation & View Control
 
-| Command | Action |
-|---------|--------|
-| "Push all tasks to next week" | Bulk update (+7 days) |
-| "Move everything to next month" | Bulk update (+30 days) |
-| "Delete all meeting tasks" | Bulk delete |
-| "Add 5 tasks for tomorrow" | Bulk create |
+| Say This | What Happens |
+|----------|--------------|
+| "Show me all tasks for December" | Switches to monthly view, displays December 2025 |
+| "Take me to next week" | Opens weekly view showing next 7 days |
+| "Go to November twenty-fifth" | Opens daily view for Nov 25, 2025 |
+| "Show all my tasks in a list" | Switches to list view with all tasks |
+| "Show me this Friday" | Opens daily view for this coming Friday |
+
+### Search & Filtering
+
+| Say This | What Happens |
+|----------|--------------|
+| "Show me all administrative tasks" | Searches tasks for "administrative", displays results in list view with search banner |
+| "What urgent tasks do I have?" | Filters list view to show only urgent priority tasks |
+| "Show tasks sorted by deadline ascending" | Switches to list view, sorts by deadline (earliest first) |
+| "Show me completed tasks" | Filters to display only completed tasks |
+| "Find tasks related to the client presentation" | Searches and displays all matching tasks |
+
+### Context-Aware Follow-Ups
+
+| Conversation Flow | What Happens |
+|-------------------|--------------|
+| **You:** "Add a task for the board presentation"<br>**Agent:** "Done"<br>**You:** "Make it urgent" | Agent remembers the presentation task and updates its priority to urgent |
+| **You:** "Show me tasks for next week"<br>**Agent:** "Showing next week"<br>**You:** "Push them all to the following week" | Agent bulk-updates all displayed tasks by +7 days |
+| **You:** "Delete the compliance task"<br>**Agent:** "Deleted"<br>**You:** "Create a new one for next month" | Agent creates new compliance task with deadline in next month |
 
 ---
 

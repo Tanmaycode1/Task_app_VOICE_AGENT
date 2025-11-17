@@ -103,6 +103,19 @@ DATE INFERENCE:
 - "December" / "Dec" = 2025-12-01
 - "25th December" = 2025-12-25
 
+RELATIVE DAY REFERENCES (Monday, Tuesday, etc.):
+- **ALWAYS use the NEAREST occurrence** (forward in time from today)
+- If today is Wednesday Nov 12:
+  * "push to Monday" = Monday Nov 17 (next Monday, +5 days)
+  * "move to Friday" = Friday Nov 14 (this coming Friday, +2 days)
+  * "reschedule to Sunday" = Sunday Nov 16 (this coming Sunday, +4 days)
+- **TIME**: Keep original time if task has one, otherwise default to 12:00 PM
+- **ALGORITHM**: 
+  1. Get day of week for current date (0=Monday, 6=Sunday)
+  2. Get target day of week from user's request
+  3. Calculate days ahead: (target - current) % 7, if 0 then use 7
+  4. Add those days to current date
+
 INDEX-BASED: When user says "4th task", "delete 3rd task", etc:
 1. Call list_tasks to get current view
 2. Use the task at that index position (remember: list is 0-indexed, but user speaks 1-indexed)
