@@ -77,8 +77,13 @@ export default function Home() {
       const params: Record<string, string | number> = { limit: 500 };
       if (startDate) params.start_date = startDate.toISOString();
       if (endDate) params.end_date = endDate.toISOString();
-      if (statusFilter !== 'all') params.status = statusFilter;
-      if (priorityFilter !== 'all') params.priority = priorityFilter;
+      
+      // Only apply filters if NOT in search mode
+      // In search mode, we fetch all tasks and filter by searchResultIds
+      if (!searchResultIds) {
+        if (statusFilter !== 'all') params.status = statusFilter;
+        if (priorityFilter !== 'all') params.priority = priorityFilter;
+      }
 
       const [tasksRes, statsRes] = await Promise.all([
         fetchTasks(params),
@@ -124,7 +129,7 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [viewMode, selectedDate, sortField, sortOrder, statusFilter, priorityFilter]);
+  }, [viewMode, selectedDate, sortField, sortOrder, statusFilter, priorityFilter, searchResultIds]);
 
   useEffect(() => {
     loadTasks();
@@ -178,11 +183,12 @@ export default function Home() {
         if (command.search_results !== undefined) {
           setSearchResultIds(command.search_results);
           setSearchQuery(command.search_query || '');
-        } else {
-          // Clear search mode when not a search
+        } else if (command.view_mode && command.view_mode !== 'list') {
+          // Only clear search mode when explicitly switching away from list view
           setSearchResultIds(null);
           setSearchQuery('');
         }
+        // If no search_results and staying in list view, preserve current search state
       }
     },
     []

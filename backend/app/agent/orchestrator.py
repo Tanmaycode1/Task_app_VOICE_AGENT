@@ -89,6 +89,7 @@ UPDATE (Single or Multiple):
 - **AUTO-NAVIGATION**: When deadline changes significantly (week/month shift), UI automatically navigates to new date
   * You DON'T need to call change_ui_view manually for date updates
   * The tools handle navigation automatically
+  * When updating tasks from search results, navigation is smart and preserves search context when possible
 
 SEARCH & FILTER:
 - "Show me administrative tasks" → search_tasks(query="administrative") + UI shows results
