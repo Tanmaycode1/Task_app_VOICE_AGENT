@@ -17,9 +17,10 @@ type UICommand = {
 type AgentVoiceButtonProps = {
   onTasksUpdated?: () => void;
   onUICommand?: (command: UICommand) => void;
+  onProcessingStart?: () => void;
 };
 
-export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButtonProps) {
+export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStart }: AgentVoiceButtonProps) {
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
@@ -175,6 +176,11 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
               setIsProcessing(true);
               setAgentResponse('');
               setToolActivity('');
+              
+              // Notify parent that processing started (to close choice modal)
+              if (onProcessingStart) {
+                onProcessingStart();
+              }
             }
           }
 
@@ -184,6 +190,11 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand }: AgentVoiceButt
             setIsProcessing(true);
             setAgentResponse('');
             setToolActivity('Processing...');
+            
+            // Notify parent that processing started (to close choice modal)
+            if (onProcessingStart) {
+              onProcessingStart();
+            }
           }
 
           // Agent events

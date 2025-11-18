@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { AgentVoiceButton } from '@/components/AgentVoiceButton';
 import { TaskModal } from '@/components/TaskModal';
+import ChoiceModal, { Choice } from '@/components/ChoiceModal';
 import {
   fetchTasks,
   fetchTaskStats,
@@ -12,7 +13,7 @@ import {
 } from '@/lib/api';
 
 type ViewMode = 'daily' | 'weekly' | 'monthly' | 'list';
-type SortField = 'deadline' | 'priority' | 'created_at' | 'title';
+type SortField = 'scheduled_date' | 'deadline' | 'priority' | 'created_at' | 'title';
 type SortOrder = 'asc' | 'desc';
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -20,14 +21,14 @@ const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stats, setStats] = useState<TaskStats | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('daily');
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // List view filters
-  const [sortField, setSortField] = useState<SortField>('deadline');
+  const [sortField, setSortField] = useState<SortField>('scheduled_date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
@@ -35,6 +36,11 @@ export default function Home() {
   // Search mode for displaying specific search results
   const [searchResultIds, setSearchResultIds] = useState<number[] | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  
+  // Choice modal state
+  const [isChoiceModalOpen, setIsChoiceModalOpen] = useState(false);
+  const [choiceModalTitle, setChoiceModalTitle] = useState('');
+  const [choiceModalChoices, setChoiceModalChoices] = useState<Choice[]>([]);
 
   const loadTasks = useCallback(async (showLoading = true) => {
     if (showLoading) {
@@ -101,6 +107,9 @@ export default function Home() {
           if (sortField === 'priority') {
             aVal = PRIORITY_ORDER[a.priority as keyof typeof PRIORITY_ORDER];
             bVal = PRIORITY_ORDER[b.priority as keyof typeof PRIORITY_ORDER];
+          } else if (sortField === 'scheduled_date') {
+            aVal = new Date(a.scheduled_date).getTime();
+            bVal = new Date(b.scheduled_date).getTime();
           } else if (sortField === 'deadline') {
             aVal = a.deadline ? new Date(a.deadline).getTime() : Infinity;
             bVal = b.deadline ? new Date(b.deadline).getTime() : Infinity;
@@ -122,6 +131,21 @@ export default function Home() {
 
       setTasks(sortedTasks);
       setStats(statsRes);
+      
+      // If in search mode, update searchResultIds to remove deleted tasks
+      if (searchResultIds) {
+        const currentTaskIds = sortedTasks.map(t => t.id);
+        const validSearchIds = searchResultIds.filter(id => currentTaskIds.includes(id));
+        
+        // If all search results were deleted, clear search mode
+        if (validSearchIds.length === 0) {
+          setSearchResultIds(null);
+          setSearchQuery('');
+        } else if (validSearchIds.length !== searchResultIds.length) {
+          // Some tasks were deleted, update the search results
+          setSearchResultIds(validSearchIds);
+        }
+      }
     } catch (err) {
       console.error('Failed to load tasks:', err);
     } finally {
@@ -129,7 +153,7 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [viewMode, selectedDate, sortField, sortOrder, statusFilter, priorityFilter, searchResultIds]);
+  }, [viewMode, selectedDate, sortField, sortOrder, statusFilter, priorityFilter, searchResultIds, searchQuery]);
 
   useEffect(() => {
     loadTasks();
@@ -157,6 +181,8 @@ export default function Home() {
       filter_priority?: string;
       search_results?: number[];
       search_query?: string;
+      title?: string;
+      choices?: Choice[];
     }) => {
       if (command.type === 'change_view') {
         if (command.view_mode) {
@@ -189,10 +215,24 @@ export default function Home() {
           setSearchQuery('');
         }
         // If no search_results and staying in list view, preserve current search state
+      } else if (command.type === 'show_choices') {
+        // Open choice modal
+        if (command.title && command.choices) {
+          setChoiceModalTitle(command.title);
+          setChoiceModalChoices(command.choices);
+          setIsChoiceModalOpen(true);
+        }
       }
     },
     []
   );
+  
+  // Auto-close choice modal when agent starts processing the next query
+  const handleProcessingStart = useCallback(() => {
+    if (isChoiceModalOpen) {
+      setIsChoiceModalOpen(false);
+    }
+  }, [isChoiceModalOpen]);
 
   const goToPrevious = () => {
     const newDate = new Date(selectedDate);
@@ -248,7 +288,22 @@ export default function Home() {
     }
   };
 
-  const getPriorityColor = (priority: string, status?: string) => {
+  const isTaskMissed = (task: Task) => {
+    // Task is missed if it has a deadline, deadline has passed, and it's not completed
+    if (!task.deadline || task.status === 'completed') {
+      return false;
+    }
+    const now = new Date();
+    const deadline = new Date(task.deadline);
+    return deadline < now;
+  };
+
+  const getPriorityColor = (priority: string, status?: string, isMissed?: boolean) => {
+    // Red for missed tasks
+    if (isMissed) {
+      return 'border-red-600 bg-red-100 dark:bg-red-950/40';
+    }
+    
     // Grey for cancelled tasks
     if (status === 'cancelled') {
       return 'border-zinc-400 bg-zinc-100 dark:bg-zinc-800/50';
@@ -313,8 +368,8 @@ export default function Home() {
     const tasksByHour: Record<number, Task[]> = {};
 
     tasks.forEach((task) => {
-      if (task.deadline) {
-        const hour = new Date(task.deadline).getHours();
+      if (task.scheduled_date) {
+        const hour = new Date(task.scheduled_date).getHours();
         if (!tasksByHour[hour]) tasksByHour[hour] = [];
         tasksByHour[hour].push(task);
       }
@@ -328,24 +383,37 @@ export default function Home() {
               {hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`}
             </div>
             <div className="flex-1 min-h-[80px] p-2 space-y-1">
-              {tasksByHour[hour]?.map((task) => (
-                <button
-                  key={task.id}
-                  onClick={() => handleTaskClick(task)}
-                  className={`w-full text-left p-2 rounded-lg border-l-4 transition ${getPriorityColor(task.priority, task.status)}`}
-                >
-                  <div className="flex items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium truncate ${task.status === 'completed' ? 'line-through text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                        {task.title}
-                      </p>
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                        {new Date(task.deadline!).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                      </p>
+              {tasksByHour[hour]?.map((task) => {
+                const missed = isTaskMissed(task);
+                return (
+                  <button
+                    key={task.id}
+                    onClick={() => handleTaskClick(task)}
+                    className={`w-full text-left p-2 rounded-lg border-l-4 transition ${getPriorityColor(task.priority, task.status, missed)}`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1">
+                          <p className={`text-sm font-medium truncate ${task.status === 'completed' ? 'line-through text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                            {task.title}
+                          </p>
+                          {missed && (
+                            <span className="text-xs font-semibold text-red-600 dark:text-red-400">MISSED</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                          {new Date(task.scheduled_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                          {task.deadline && (
+                            <span className="ml-2 text-red-600 dark:text-red-400">
+                              ⚠ Due: {new Date(task.deadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </span>
+                          )}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -367,8 +435,8 @@ export default function Home() {
 
     const tasksByDay: Record<string, Task[]> = {};
     tasks.forEach((task) => {
-      if (task.deadline) {
-        const dateKey = new Date(task.deadline).toDateString();
+      if (task.scheduled_date) {
+        const dateKey = new Date(task.scheduled_date).toDateString();
         if (!tasksByDay[dateKey]) tasksByDay[dateKey] = [];
         tasksByDay[dateKey].push(task);
       }
@@ -389,17 +457,21 @@ export default function Home() {
                 </div>
               </div>
               <div className="space-y-1">
-                {dayTasks.slice(0, 5).map((task) => (
-                  <button
-                    key={task.id}
-                    onClick={() => handleTaskClick(task)}
-                    className={`w-full text-left p-1.5 rounded text-xs border-l-4 transition hover:bg-zinc-50 dark:hover:bg-zinc-800 ${getPriorityColor(task.priority, task.status)}`}
-                  >
-                    <p className={`truncate ${task.status === 'completed' ? 'line-through text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                      {task.title}
-                    </p>
-                  </button>
-                ))}
+                {dayTasks.slice(0, 5).map((task) => {
+                  const missed = isTaskMissed(task);
+                  return (
+                    <button
+                      key={task.id}
+                      onClick={() => handleTaskClick(task)}
+                      className={`w-full text-left p-1.5 rounded text-xs border-l-4 transition hover:bg-zinc-50 dark:hover:bg-zinc-800 ${getPriorityColor(task.priority, task.status, missed)}`}
+                    >
+                      <p className={`truncate ${task.status === 'completed' ? 'line-through text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                        {task.title}
+                        {missed && <span className="ml-1 text-red-600">⚠</span>}
+                      </p>
+                    </button>
+                  );
+                })}
                 {dayTasks.length > 5 && (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center">
                     +{dayTasks.length - 5} more
@@ -431,8 +503,8 @@ export default function Home() {
 
     const tasksByDay: Record<string, Task[]> = {};
     tasks.forEach((task) => {
-      if (task.deadline) {
-        const dateKey = new Date(task.deadline).toDateString();
+      if (task.scheduled_date) {
+        const dateKey = new Date(task.scheduled_date).toDateString();
         if (!tasksByDay[dateKey]) tasksByDay[dateKey] = [];
         tasksByDay[dateKey].push(task);
       }
@@ -462,15 +534,18 @@ export default function Home() {
                   {date.getDate()}
                 </div>
                 <div className="space-y-0.5">
-                  {dayTasks.slice(0, 3).map((task) => (
-                    <button
-                      key={task.id}
-                      onClick={() => handleTaskClick(task)}
-                      className={`w-full text-left px-1 py-0.5 rounded text-xs truncate transition ${getPriorityDotColor(task.priority, task.status)} text-white hover:opacity-80 ${task.status === 'completed' ? 'line-through opacity-60' : ''}`}
-                    >
-                      {task.title}
-                    </button>
-                  ))}
+                  {dayTasks.slice(0, 3).map((task) => {
+                    const missed = isTaskMissed(task);
+                    return (
+                      <button
+                        key={task.id}
+                        onClick={() => handleTaskClick(task)}
+                        className={`w-full text-left px-1 py-0.5 rounded text-xs truncate transition ${missed ? 'bg-red-600' : getPriorityDotColor(task.priority, task.status)} text-white hover:opacity-80 ${task.status === 'completed' ? 'line-through opacity-60' : ''}`}
+                      >
+                        {task.title} {missed && '⚠'}
+                      </button>
+                    );
+                  })}
                   {dayTasks.length > 3 && (
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       +{dayTasks.length - 3}
@@ -524,6 +599,7 @@ export default function Home() {
               onChange={(e) => setSortField(e.target.value as SortField)}
               className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
             >
+              <option value="scheduled_date">Scheduled Date</option>
               <option value="deadline">Deadline</option>
               <option value="priority">Priority</option>
               <option value="created_at">Created Date</option>
@@ -585,77 +661,103 @@ export default function Home() {
                 <th className="pb-3 pr-4">Priority</th>
                 <th className="pb-3 pr-4">Title</th>
                 <th className="pb-3 pr-4">Status</th>
+                <th className="pb-3 pr-4">Scheduled</th>
                 <th className="pb-3 pr-4">Deadline</th>
                 <th className="pb-3">Created</th>
               </tr>
             </thead>
             <tbody>
-              {displayTasks.map((task) => (
-                <tr
-                  key={task.id}
-                  onClick={() => handleTaskClick(task)}
-                  className="cursor-pointer border-b border-zinc-100 transition hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900"
-                >
-                  <td className="py-3 pr-4">
-                    <span className={`rounded-full px-2 py-1 text-xs font-medium ${getPriorityBadgeColor(task.priority, task.status)}`}>
-                      {task.priority}
-                    </span>
-                  </td>
-                  <td className="py-3 pr-4">
-                    <div className="flex items-center gap-2">
-                      {task.status === 'completed' && (
-                        <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className={`font-medium ${task.status === 'completed' ? 'line-through text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                          {task.title}
-                        </p>
-                        {task.description && (
-                          <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-md">
-                            {task.description}
-                          </p>
+              {displayTasks.map((task) => {
+                const missed = isTaskMissed(task);
+                return (
+                  <tr
+                    key={task.id}
+                    onClick={() => handleTaskClick(task)}
+                    className={`cursor-pointer border-b border-zinc-100 transition hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900 ${missed ? 'bg-red-50 dark:bg-red-950/20' : ''}`}
+                  >
+                    <td className="py-3 pr-4">
+                      <span className={`rounded-full px-2 py-1 text-xs font-medium ${missed ? 'bg-red-600 text-white' : getPriorityBadgeColor(task.priority, task.status)}`}>
+                        {task.priority}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div className="flex items-center gap-2">
+                        {task.status === 'completed' && (
+                          <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
                         )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className={`font-medium ${task.status === 'completed' ? 'line-through text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                              {task.title}
+                            </p>
+                            {missed && (
+                              <span className="text-xs font-semibold text-red-600 dark:text-red-400">MISSED</span>
+                            )}
+                          </div>
+                          {task.description && (
+                            <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-md">
+                              {task.description}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="py-3 pr-4">
-                    <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                      {task.status.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td className="py-3 pr-4">
-                    {task.deadline ? (
+                    </td>
+                    <td className="py-3 pr-4">
+                      <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                        {task.status.replace('_', ' ')}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4">
                       <div className="text-sm">
                         <div className="text-zinc-900 dark:text-zinc-100">
-                          {new Date(task.deadline).toLocaleDateString('en-US', {
+                          {new Date(task.scheduled_date).toLocaleDateString('en-US', {
                             month: 'short',
                             day: 'numeric',
                             year: 'numeric',
                           })}
                         </div>
                         <div className="text-zinc-500 dark:text-zinc-400">
-                          {new Date(task.deadline).toLocaleTimeString('en-US', {
+                          {new Date(task.scheduled_date).toLocaleTimeString('en-US', {
                             hour: 'numeric',
                             minute: '2-digit',
                           })}
                         </div>
                       </div>
-                    ) : (
-                      <span className="text-sm text-zinc-400">—</span>
-                    )}
-                  </td>
-                  <td className="py-3">
-                    <span className="text-sm text-zinc-500 dark:text-zinc-400">
-                      {new Date(task.created_at).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                      })}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="py-3 pr-4">
+                      {task.deadline ? (
+                        <div className="text-sm">
+                          <div className={missed ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-zinc-900 dark:text-zinc-100'}>
+                            {new Date(task.deadline).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            })}
+                          </div>
+                          <div className={missed ? 'text-red-600 dark:text-red-400' : 'text-zinc-500 dark:text-zinc-400'}>
+                            {new Date(task.deadline).toLocaleTimeString('en-US', {
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-zinc-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-3">
+                      <span className="text-sm text-zinc-500 dark:text-zinc-400">
+                        {new Date(task.created_at).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                        })}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -690,6 +792,17 @@ export default function Home() {
           <div className="flex gap-1 rounded-lg border border-zinc-200 p-1 dark:border-zinc-800">
             <button
               type="button"
+              onClick={() => setViewMode('list')}
+              className={`rounded px-3 py-1.5 text-sm font-medium transition ${
+                viewMode === 'list'
+                  ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-black'
+                  : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800'
+              }`}
+            >
+              List
+            </button>
+            <button
+              type="button"
               onClick={() => setViewMode('daily')}
               className={`rounded px-3 py-1.5 text-sm font-medium transition ${
                 viewMode === 'daily'
@@ -720,17 +833,6 @@ export default function Home() {
               }`}
             >
               Month
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('list')}
-              className={`rounded px-3 py-1.5 text-sm font-medium transition ${
-                viewMode === 'list'
-                  ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-black'
-                  : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800'
-              }`}
-            >
-              List
             </button>
           </div>
         </div>
@@ -802,8 +904,20 @@ export default function Home() {
         />
       )}
 
+      {/* Choice Modal */}
+      <ChoiceModal
+        isOpen={isChoiceModalOpen}
+        title={choiceModalTitle}
+        choices={choiceModalChoices}
+        onClose={() => setIsChoiceModalOpen(false)}
+      />
+
       {/* Agent Voice Button */}
-      <AgentVoiceButton onTasksUpdated={handleTasksUpdated} onUICommand={handleUICommand} />
+      <AgentVoiceButton 
+        onTasksUpdated={handleTasksUpdated} 
+        onUICommand={handleUICommand}
+        onProcessingStart={handleProcessingStart}
+      />
     </div>
   );
 }

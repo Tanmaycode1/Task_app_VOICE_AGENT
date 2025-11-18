@@ -18,6 +18,9 @@ export function TaskModal({ task, isOpen, onClose, onUpdate }: TaskModalProps) {
     notes: task.notes || '',
     priority: task.priority,
     status: task.status,
+    scheduled_date: task.scheduled_date
+      ? new Date(task.scheduled_date).toISOString().slice(0, 16)
+      : '',
     deadline: task.deadline
       ? new Date(task.deadline).toISOString().slice(0, 16)
       : '',
@@ -32,6 +35,9 @@ export function TaskModal({ task, isOpen, onClose, onUpdate }: TaskModalProps) {
         notes: task.notes || '',
         priority: task.priority,
         status: task.status,
+        scheduled_date: task.scheduled_date
+          ? new Date(task.scheduled_date).toISOString().slice(0, 16)
+          : '',
         deadline: task.deadline
           ? new Date(task.deadline).toISOString().slice(0, 16)
           : '',
@@ -52,6 +58,7 @@ export function TaskModal({ task, isOpen, onClose, onUpdate }: TaskModalProps) {
         notes: formData.notes || undefined,
         priority: formData.priority as TaskPriority,
         status: formData.status as TaskStatus,
+        scheduled_date: formData.scheduled_date ? new Date(formData.scheduled_date).toISOString() : undefined,
         deadline: formData.deadline ? new Date(formData.deadline).toISOString() : undefined,
       });
       onUpdate();
@@ -170,16 +177,34 @@ export function TaskModal({ task, isOpen, onClose, onUpdate }: TaskModalProps) {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
-              Deadline
-            </label>
-            <input
-              type="datetime-local"
-              value={formData.deadline}
-              onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
-              className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-2 text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                Scheduled Date
+                <span className="text-red-500 ml-1">*</span>
+              </label>
+              <input
+                type="datetime-local"
+                required
+                value={formData.scheduled_date}
+                onChange={(e) => setFormData({ ...formData, scheduled_date: e.target.value })}
+                className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-2 text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              />
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">When to work on it</p>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                Deadline (Optional)
+              </label>
+              <input
+                type="datetime-local"
+                value={formData.deadline}
+                onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+                className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-2 text-zinc-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              />
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Must be done by</p>
+            </div>
           </div>
 
           <div className="flex items-center justify-between border-t border-zinc-200 pt-4 dark:border-zinc-800">

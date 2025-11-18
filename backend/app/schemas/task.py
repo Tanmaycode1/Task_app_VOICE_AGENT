@@ -15,7 +15,8 @@ class TaskBase(BaseModel):
     notes: str | None = None
     priority: TaskPriority = TaskPriority.MEDIUM
     status: TaskStatus = TaskStatus.TODO
-    deadline: datetime | None = None
+    scheduled_date: datetime  # Required: when the task is planned to be done
+    deadline: datetime | None = None  # Optional: when the task MUST be completed by
 
 
 class TaskCreate(TaskBase):
@@ -32,6 +33,7 @@ class TaskUpdate(BaseModel):
     notes: str | None = None
     priority: TaskPriority | None = None
     status: TaskStatus | None = None
+    scheduled_date: datetime | None = None
     deadline: datetime | None = None
     completed_at: datetime | None = None
 

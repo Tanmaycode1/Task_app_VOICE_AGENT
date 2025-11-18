@@ -29,9 +29,10 @@ TOOLS = [
                                 "enum": ["low", "medium", "high", "urgent"],
                                 "description": "Priority level (default: medium)",
                             },
-                            "deadline": {"type": "string", "description": "Deadline in ISO 8601 format"},
+                            "scheduled_date": {"type": "string", "description": "When task is planned to be done (ISO 8601, REQUIRED)"},
+                            "deadline": {"type": "string", "description": "Hard deadline - when task MUST be done by (ISO 8601, OPTIONAL)"},
                         },
-                        "required": ["title"],
+                        "required": ["title", "scheduled_date"],
                     },
                 },
             },
@@ -64,10 +65,15 @@ TOOLS = [
                             "type": "string",
                             "enum": ["todo", "in_progress", "completed", "cancelled"],
                         },
-                        "deadline": {"type": "string", "description": "New deadline in ISO 8601"},
-                        "deadline_shift_days": {
+                        "scheduled_date": {"type": "string", "description": "New scheduled date in ISO 8601"},
+                        "scheduled_date_shift_days": {
                             "type": "integer",
-                            "description": "Shift deadline by N days (e.g., 7 for next week, 30 for next month)",
+                            "description": "Shift scheduled_date by N days (e.g., 7 for next week, 30 for next month)",
+                        },
+                        "deadline": {"type": "string", "description": "New deadline in ISO 8601"},
+                        "shift_deadline_too": {
+                            "type": "boolean",
+                            "description": "If shifting scheduled_date, also shift deadline by same amount (default: false)",
                         },
                     },
                 },
@@ -106,6 +112,30 @@ TOOLS = [
                     "enum": ["low", "medium", "high", "urgent"],
                     "description": "Filter by priority level",
                 },
+                "has_deadline": {
+                    "type": "boolean",
+                    "description": "Filter tasks: true = only tasks WITH deadline, false = only tasks WITHOUT deadline",
+                },
+                "deadline_before": {
+                    "type": "string",
+                    "description": "Show tasks with deadline before this date (ISO 8601 format)",
+                },
+                "deadline_after": {
+                    "type": "string",
+                    "description": "Show tasks with deadline after this date (ISO 8601 format)",
+                },
+                "scheduled_before": {
+                    "type": "string",
+                    "description": "Show tasks scheduled before this date (ISO 8601 format)",
+                },
+                "scheduled_after": {
+                    "type": "string",
+                    "description": "Show tasks scheduled after this date (ISO 8601 format)",
+                },
+                "is_missed": {
+                    "type": "boolean",
+                    "description": "Filter missed tasks: true = only missed tasks (deadline passed, not completed)",
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of tasks to return (default 10)",
@@ -138,12 +168,16 @@ TOOLS = [
                     "description": "Priority level (default: medium)",
                     "default": "medium",
                 },
+                "scheduled_date": {
+                    "type": "string",
+                    "description": "When task is planned to be done - REQUIRED (ISO 8601 format)",
+                },
                 "deadline": {
                     "type": "string",
-                    "description": "Deadline in ISO 8601 format (e.g., 2024-11-20T14:30:00)",
+                    "description": "Hard deadline when task MUST be done by - OPTIONAL (ISO 8601 format)",
                 },
             },
-            "required": ["title"],
+            "required": ["title", "scheduled_date"],
         },
     },
     {
@@ -178,9 +212,21 @@ TOOLS = [
                     "enum": ["todo", "in_progress", "completed", "cancelled"],
                     "description": "New status",
                 },
+                "scheduled_date": {
+                    "type": "string",
+                    "description": "New scheduled date in ISO 8601 format",
+                },
+                "scheduled_date_shift_days": {
+                    "type": "integer",
+                    "description": "Shift scheduled_date by N days (e.g., 7 for next week)",
+                },
                 "deadline": {
                     "type": "string",
                     "description": "New deadline in ISO 8601 format",
+                },
+                "shift_deadline_too": {
+                    "type": "boolean",
+                    "description": "If shifting scheduled_date, also shift deadline by same amount",
                 },
             },
             "required": ["task_id"],
@@ -238,6 +284,46 @@ TOOLS = [
         },
     },
     {
+        "name": "show_choices",
+        "description": "Display a persistent choice modal to the user when there are multiple options. Use this when user needs to pick between options (delete/update ambiguity, split tasks, etc). The modal will stay visible until user selects an option.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Title of the choice modal (e.g., 'Which task?', 'What would you like to do?')",
+                },
+                "choices": {
+                    "type": "array",
+                    "description": "Array of choices to display",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "Unique identifier for this choice",
+                            },
+                            "label": {
+                                "type": "string",
+                                "description": "Short label (e.g., 'A', 'B', '1', '2')",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Full description of the choice (e.g., task title, action description)",
+                            },
+                            "value": {
+                                "type": "string",
+                                "description": "Value to return when selected (e.g., task_id, 'split', 'mark_complete', 'delete_all')",
+                            },
+                        },
+                        "required": ["id", "label", "description", "value"],
+                    },
+                },
+            },
+            "required": ["title", "choices"],
+        },
+    },
+    {
         "name": "change_ui_view",
         "description": "Change the UI view and date selection to help the user visualize tasks. Use this when the user wants to see tasks in a specific time period, view mode, or with specific filters/sorting. Especially useful for list view with filters.",
         "input_schema": {
@@ -288,6 +374,8 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], db: Session) -> dic
         return _create_task(db, **tool_input)
     elif tool_name == "create_multiple_tasks":
         return _create_multiple_tasks(db, **tool_input)
+    elif tool_name == "show_choices":
+        return _show_choices(**tool_input)
     elif tool_name == "update_task":
         return _update_task(db, **tool_input)
     elif tool_name == "update_multiple_tasks":
@@ -306,21 +394,94 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], db: Session) -> dic
         return {"error": f"Unknown tool: {tool_name}"}
 
 
+def _show_choices(
+    title: str,
+    choices: list[dict[str, str]],
+) -> dict[str, Any]:
+    """
+    Display a choice modal to the user.
+    This returns a special UI command that will be handled by the frontend.
+    """
+    return {
+        "success": True,
+        "ui_command": {
+            "type": "show_choices",
+            "title": title,
+            "choices": choices,
+        },
+        "message": "Please select an option",
+    }
+
+
 def _list_tasks(
     db: Session,
     status: str | None = None,
     priority: str | None = None,
+    has_deadline: bool | None = None,
+    deadline_before: str | None = None,
+    deadline_after: str | None = None,
+    scheduled_before: str | None = None,
+    scheduled_after: str | None = None,
+    is_missed: bool | None = None,
     limit: int = 10,
 ) -> dict[str, Any]:
     """List tasks with optional filters."""
     query = db.query(Task)
     
+    # Status and priority filters
     if status:
         query = query.filter(Task.status == status)
     if priority:
         query = query.filter(Task.priority == priority)
     
-    tasks = query.order_by(Task.created_at.desc()).limit(limit).all()
+    # Deadline existence filter
+    if has_deadline is not None:
+        if has_deadline:
+            query = query.filter(Task.deadline.isnot(None))
+        else:
+            query = query.filter(Task.deadline.is_(None))
+    
+    # Deadline range filters
+    if deadline_before:
+        try:
+            before_date = datetime.fromisoformat(deadline_before)
+            query = query.filter(Task.deadline < before_date)
+        except ValueError:
+            pass  # Ignore invalid dates
+    
+    if deadline_after:
+        try:
+            after_date = datetime.fromisoformat(deadline_after)
+            query = query.filter(Task.deadline > after_date)
+        except ValueError:
+            pass
+    
+    # Scheduled date range filters
+    if scheduled_before:
+        try:
+            before_date = datetime.fromisoformat(scheduled_before)
+            query = query.filter(Task.scheduled_date < before_date)
+        except ValueError:
+            pass
+    
+    if scheduled_after:
+        try:
+            after_date = datetime.fromisoformat(scheduled_after)
+            query = query.filter(Task.scheduled_date > after_date)
+        except ValueError:
+            pass
+    
+    # Missed tasks filter (deadline passed and not completed)
+    if is_missed is True:
+        now = datetime.utcnow()
+        query = query.filter(
+            Task.deadline.isnot(None),
+            Task.deadline < now,
+            Task.status != TaskStatus.COMPLETED.value
+        )
+    
+    # Order by scheduled_date (nearest first) and limit results
+    tasks = query.order_by(Task.scheduled_date.asc()).limit(limit).all()
     
     return {
         "success": True,
@@ -332,6 +493,7 @@ def _list_tasks(
                 "description": t.description,
                 "priority": t.priority,
                 "status": t.status,
+                "scheduled_date": t.scheduled_date.isoformat() if t.scheduled_date else None,
                 "deadline": t.deadline.isoformat() if t.deadline else None,
                 "created_at": t.created_at.isoformat(),
             }
@@ -343,6 +505,7 @@ def _list_tasks(
 def _create_task(
     db: Session,
     title: str,
+    scheduled_date: str,
     description: str | None = None,
     notes: str | None = None,
     priority: str = "medium",
@@ -350,43 +513,55 @@ def _create_task(
 ) -> dict[str, Any]:
     """Create a new task."""
     
-    # Parse deadline and set default time to 12:00 PM if only date is provided
-    # EXCEPTION: If deadline is "tomorrow" (1 day from now) and time is midnight, use today's current time
-    parsed_deadline = None
-    if deadline:
+    def parse_date_with_defaults(date_str: str) -> datetime:
+        """Parse date string and apply default time rules."""
         try:
-            parsed_deadline = datetime.fromisoformat(deadline)
+            parsed = datetime.fromisoformat(date_str)
             now = datetime.utcnow()
+            days_diff = (parsed.date() - now.date()).days
             
-            # Check if this is "tomorrow" (approximately 1 day from now, within 24-48 hours)
-            days_diff = (parsed_deadline.date() - now.date()).days
-            
-            # If time is exactly midnight (00:00:00), it means only date was provided
-            if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
-                # Special case: if it's tomorrow, use today's current time
+            # If time is midnight, apply default time rules
+            if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0:
+                # Special case: tomorrow uses current time
                 if days_diff == 1:
-                    parsed_deadline = parsed_deadline.replace(hour=now.hour, minute=now.minute, second=now.second)
+                    parsed = parsed.replace(hour=now.hour, minute=now.minute, second=now.second)
                 else:
-                    # For other dates, default to 12:00 PM (noon)
-                    parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
+                    # Other dates default to 12:00 PM
+                    parsed = parsed.replace(hour=12, minute=0, second=0)
+            return parsed
         except ValueError:
-            # If ISO format fails, try to parse date only
+            # Try parsing date only
             try:
                 from datetime import date
-                date_only = date.fromisoformat(deadline)
+                date_only = date.fromisoformat(date_str)
                 now = datetime.utcnow()
                 days_diff = (date_only - now.date()).days
                 
-                # If it's tomorrow, use today's current time
                 if days_diff == 1:
-                    parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(
+                    # Tomorrow: use current time
+                    return datetime.combine(date_only, datetime.min.time()).replace(
                         hour=now.hour, minute=now.minute, second=now.second
                     )
                 else:
-                    # For other dates, default to 12:00 PM
-                    parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
+                    # Other dates: 12:00 PM
+                    return datetime.combine(date_only, datetime.min.time()).replace(hour=12)
             except ValueError:
-                parsed_deadline = None
+                raise ValueError(f"Invalid date format: {date_str}")
+    
+    # Parse scheduled_date (REQUIRED)
+    parsed_scheduled = parse_date_with_defaults(scheduled_date)
+    
+    # Parse deadline (OPTIONAL)
+    parsed_deadline = None
+    if deadline:
+        parsed_deadline = parse_date_with_defaults(deadline)
+        
+        # Validate: deadline should be >= scheduled_date
+        if parsed_deadline < parsed_scheduled:
+            return {
+                "success": False,
+                "error": f"Deadline ({parsed_deadline.date()}) cannot be before scheduled date ({parsed_scheduled.date()})"
+            }
     
     task = Task(
         title=title,
@@ -394,6 +569,7 @@ def _create_task(
         notes=notes,
         priority=priority,
         status=TaskStatus.TODO.value,
+        scheduled_date=parsed_scheduled,
         deadline=parsed_deadline,
     )
     
@@ -409,6 +585,7 @@ def _create_task(
             "title": task.title,
             "priority": task.priority,
             "status": task.status,
+            "scheduled_date": task.scheduled_date.isoformat(),
             "deadline": task.deadline.isoformat() if task.deadline else None,
         },
     }
@@ -427,7 +604,10 @@ def _update_task(
     notes: str | None = None,
     priority: str | None = None,
     status: str | None = None,
+    scheduled_date: str | None = None,
+    scheduled_date_shift_days: int | None = None,
     deadline: str | None = None,
+    shift_deadline_too: bool = False,
 ) -> dict[str, Any]:
     """Update an existing task."""
     task = db.query(Task).filter(Task.id == task_id).first()
@@ -435,10 +615,23 @@ def _update_task(
     if not task:
         return {"success": False, "error": f"Task with ID {task_id} not found"}
     
-    # Track if deadline changed and by how much
-    original_deadline = task.deadline
-    deadline_changed = False
+    def parse_date(date_str: str) -> datetime:
+        """Parse date with 12 PM default for midnight times."""
+        try:
+            parsed = datetime.fromisoformat(date_str)
+            if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0:
+                parsed = parsed.replace(hour=12, minute=0, second=0)
+            return parsed
+        except ValueError:
+            from datetime import date
+            date_only = date.fromisoformat(date_str)
+            return datetime.combine(date_only, datetime.min.time()).replace(hour=12)
     
+    # Track changes
+    original_scheduled = task.scheduled_date
+    scheduled_changed = False
+    
+    # Update simple fields
     if title is not None:
         task.title = title
     if description is not None:
@@ -451,25 +644,45 @@ def _update_task(
         task.status = status
         if status == TaskStatus.COMPLETED.value and not task.completed_at:
             task.completed_at = datetime.utcnow()
+    
+    # Handle scheduled_date updates
+    if scheduled_date_shift_days is not None:
+        # Shift scheduled_date by N days
+        task.scheduled_date = task.scheduled_date + timedelta(days=scheduled_date_shift_days)
+        scheduled_changed = True
+        
+        # If shift_deadline_too, shift deadline by same amount
+        if shift_deadline_too and task.deadline:
+            task.deadline = task.deadline + timedelta(days=scheduled_date_shift_days)
+        # Otherwise, check if new scheduled_date is after deadline
+        elif task.deadline and task.scheduled_date > task.deadline:
+            return {
+                "success": False,
+                "error": f"New scheduled date ({task.scheduled_date.date()}) would be after deadline ({task.deadline.date()}). Use shift_deadline_too=true to move both.",
+                "needs_confirmation": True
+            }
+    elif scheduled_date is not None:
+        # Set absolute scheduled_date
+        task.scheduled_date = parse_date(scheduled_date)
+        scheduled_changed = True
+        
+        # Validate against deadline
+        if task.deadline and task.scheduled_date > task.deadline:
+            return {
+                "success": False,
+                "error": f"Scheduled date ({task.scheduled_date.date()}) cannot be after deadline ({task.deadline.date()})"
+            }
+    
+    # Handle deadline updates
     if deadline is not None:
-        # Parse deadline and set default time to 12:00 PM if only date is provided
-        try:
-            parsed_deadline = datetime.fromisoformat(deadline)
-            # If time is exactly midnight (00:00:00), it means only date was provided
-            # Set default time to 12:00 PM (noon)
-            if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
-                parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
-            task.deadline = parsed_deadline
-            deadline_changed = True
-        except ValueError:
-            # If ISO format fails, try to parse date only and add 12:00 PM
-            try:
-                from datetime import date
-                date_only = date.fromisoformat(deadline)
-                task.deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
-                deadline_changed = True
-            except ValueError:
-                pass
+        task.deadline = parse_date(deadline)
+        
+        # Validate: deadline should be >= scheduled_date
+        if task.deadline < task.scheduled_date:
+            return {
+                "success": False,
+                "error": f"Deadline ({task.deadline.date()}) cannot be before scheduled date ({task.scheduled_date.date()})"
+            }
     
     task.updated_at = datetime.utcnow()
     db.commit()
@@ -483,22 +696,21 @@ def _update_task(
             "title": task.title,
             "priority": task.priority,
             "status": task.status,
+            "scheduled_date": task.scheduled_date.isoformat(),
             "deadline": task.deadline.isoformat() if task.deadline else None,
         },
     }
     
-    # If deadline changed significantly (moved to different week/month), navigate to new date
-    if deadline_changed and original_deadline and task.deadline:
-        days_diff = abs((task.deadline - original_deadline).days)
+    # If scheduled_date changed significantly, navigate to new date
+    if scheduled_changed and original_scheduled:
+        days_diff = abs((task.scheduled_date - original_scheduled).days)
         
-        # Only navigate if moved by at least 3 days (significant change)
         if days_diff >= 3:
-            target_date = task.deadline.date().isoformat()
+            target_date = task.scheduled_date.date().isoformat()
             
-            # Determine view mode based on how much it shifted
-            if days_diff >= 25:  # ~1 month
+            if days_diff >= 25:
                 view_mode = "monthly"
-            elif days_diff >= 6:  # ~1 week
+            elif days_diff >= 6:
                 view_mode = "weekly"
             else:
                 view_mode = "daily"
@@ -590,6 +802,7 @@ def _search_tasks(
                 "description": t.description,
                 "priority": t.priority,
                 "status": t.status,
+                "scheduled_date": t.scheduled_date.isoformat() if t.scheduled_date else None,
                 "deadline": t.deadline.isoformat() if t.deadline else None,
             }
             for t in tasks
@@ -667,46 +880,52 @@ def _create_multiple_tasks(db: Session, tasks: list[dict[str, Any]]) -> dict[str
     created_tasks = []
     errors = []
     
+    def parse_date_with_defaults(date_str: str) -> datetime:
+        """Parse date string and apply default time rules."""
+        try:
+            parsed = datetime.fromisoformat(date_str)
+            now = datetime.utcnow()
+            days_diff = (parsed.date() - now.date()).days
+            
+            if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0:
+                if days_diff == 1:
+                    parsed = parsed.replace(hour=now.hour, minute=now.minute, second=now.second)
+                else:
+                    parsed = parsed.replace(hour=12, minute=0, second=0)
+            return parsed
+        except ValueError:
+            from datetime import date
+            date_only = date.fromisoformat(date_str)
+            now = datetime.utcnow()
+            days_diff = (date_only - now.date()).days
+            
+            if days_diff == 1:
+                return datetime.combine(date_only, datetime.min.time()).replace(
+                    hour=now.hour, minute=now.minute, second=now.second
+                )
+            else:
+                return datetime.combine(date_only, datetime.min.time()).replace(hour=12)
+    
     for i, task_data in enumerate(tasks):
         try:
-            # Parse deadline and set default time to 12:00 PM if only date is provided
-            # EXCEPTION: If deadline is "tomorrow" (1 day from now) and time is midnight, use today's current time
+            # Parse scheduled_date (REQUIRED)
+            scheduled_date = task_data.get("scheduled_date")
+            if not scheduled_date:
+                errors.append(f"Task {i+1} ('{task_data.get('title', 'Unknown')}'): scheduled_date is required")
+                continue
+            
+            parsed_scheduled = parse_date_with_defaults(scheduled_date)
+            
+            # Parse deadline (OPTIONAL)
             parsed_deadline = None
             deadline = task_data.get("deadline")
             if deadline:
-                try:
-                    parsed_deadline = datetime.fromisoformat(deadline)
-                    now = datetime.utcnow()
-                    
-                    # Check if this is "tomorrow" (1 day from now)
-                    days_diff = (parsed_deadline.date() - now.date()).days
-                    
-                    # If time is exactly midnight (00:00:00), it means only date was provided
-                    if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
-                        # Special case: if it's tomorrow, use today's current time
-                        if days_diff == 1:
-                            parsed_deadline = parsed_deadline.replace(hour=now.hour, minute=now.minute, second=now.second)
-                        else:
-                            # For other dates, default to 12:00 PM (noon)
-                            parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
-                except ValueError:
-                    # If ISO format fails, try to parse date only
-                    try:
-                        from datetime import date
-                        date_only = date.fromisoformat(deadline)
-                        now = datetime.utcnow()
-                        days_diff = (date_only - now.date()).days
-                        
-                        # If it's tomorrow, use today's current time
-                        if days_diff == 1:
-                            parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(
-                                hour=now.hour, minute=now.minute, second=now.second
-                            )
-                        else:
-                            # For other dates, default to 12:00 PM
-                            parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
-                    except ValueError:
-                        parsed_deadline = None
+                parsed_deadline = parse_date_with_defaults(deadline)
+                
+                # Validate deadline >= scheduled_date
+                if parsed_deadline < parsed_scheduled:
+                    errors.append(f"Task {i+1} ('{task_data.get('title', 'Unknown')}'): deadline before scheduled_date")
+                    continue
             
             task = Task(
                 title=task_data["title"],
@@ -714,6 +933,7 @@ def _create_multiple_tasks(db: Session, tasks: list[dict[str, Any]]) -> dict[str
                 notes=task_data.get("notes"),
                 priority=task_data.get("priority", "medium"),
                 status=TaskStatus.TODO.value,
+                scheduled_date=parsed_scheduled,
                 deadline=parsed_deadline,
             )
             
@@ -724,6 +944,7 @@ def _create_multiple_tasks(db: Session, tasks: list[dict[str, Any]]) -> dict[str
                 "id": task.id,
                 "title": task.title,
                 "priority": task.priority,
+                "scheduled_date": task.scheduled_date.isoformat(),
                 "deadline": task.deadline.isoformat() if task.deadline else None,
             })
         except Exception as e:
@@ -754,8 +975,9 @@ def _update_multiple_tasks(
     updated_tasks = []
     errors = []
     
-    # Handle deadline_shift_days for bulk date shifting
-    deadline_shift_days = updates.pop("deadline_shift_days", None)
+    # Handle scheduled_date_shift_days for bulk date shifting
+    scheduled_shift_days = updates.pop("scheduled_date_shift_days", None)
+    shift_deadline_too = updates.pop("shift_deadline_too", False)
     
     for task_id in task_ids:
         try:
@@ -765,7 +987,7 @@ def _update_multiple_tasks(
                 errors.append(f"Task ID {task_id} not found")
                 continue
             
-            # Apply updates
+            # Apply simple updates
             if "title" in updates:
                 task.title = updates["title"]
             if "description" in updates:
@@ -779,26 +1001,47 @@ def _update_multiple_tasks(
                 if updates["status"] == TaskStatus.COMPLETED.value and not task.completed_at:
                     task.completed_at = datetime.utcnow()
             
-            # Handle deadline update or shift
-            if deadline_shift_days is not None and task.deadline:
-                # Shift existing deadline by N days
-                task.deadline = task.deadline + timedelta(days=deadline_shift_days)
-            elif "deadline" in updates:
-                # Set new absolute deadline
-                deadline_str = updates["deadline"]
+            # Handle scheduled_date shifting
+            if scheduled_shift_days is not None:
+                task.scheduled_date = task.scheduled_date + timedelta(days=scheduled_shift_days)
+                
+                # If shift_deadline_too, shift deadline by same amount
+                if shift_deadline_too and task.deadline:
+                    task.deadline = task.deadline + timedelta(days=scheduled_shift_days)
+                # Otherwise check if new scheduled_date is after deadline
+                elif task.deadline and task.scheduled_date > task.deadline:
+                    errors.append(f"Task ID {task_id}: scheduled_date would be after deadline")
+                    continue
+            elif "scheduled_date" in updates:
+                # Set absolute scheduled_date
                 try:
-                    parsed_deadline = datetime.fromisoformat(deadline_str)
-                    # If time is exactly midnight (00:00:00), it means only date was provided
-                    if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
-                        parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
-                    task.deadline = parsed_deadline
+                    parsed = datetime.fromisoformat(updates["scheduled_date"])
+                    if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0:
+                        parsed = parsed.replace(hour=12, minute=0, second=0)
+                    task.scheduled_date = parsed
+                    
+                    # Validate against deadline
+                    if task.deadline and task.scheduled_date > task.deadline:
+                        errors.append(f"Task ID {task_id}: scheduled_date after deadline")
+                        continue
                 except ValueError:
-                    try:
-                        from datetime import date
-                        date_only = date.fromisoformat(deadline_str)
-                        task.deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
-                    except ValueError:
-                        pass
+                    errors.append(f"Task ID {task_id}: invalid scheduled_date format")
+                    continue
+            
+            # Handle deadline updates
+            if "deadline" in updates:
+                try:
+                    parsed = datetime.fromisoformat(updates["deadline"])
+                    if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0:
+                        parsed = parsed.replace(hour=12, minute=0, second=0)
+                    task.deadline = parsed
+                    
+                    # Validate against scheduled_date
+                    if task.deadline < task.scheduled_date:
+                        errors.append(f"Task ID {task_id}: deadline before scheduled_date")
+                        continue
+                except ValueError:
+                    pass
             
             task.updated_at = datetime.utcnow()
             
@@ -807,6 +1050,7 @@ def _update_multiple_tasks(
                 "title": task.title,
                 "priority": task.priority,
                 "status": task.status,
+                "scheduled_date": task.scheduled_date.isoformat(),
                 "deadline": task.deadline.isoformat() if task.deadline else None,
             })
         except Exception as e:
@@ -828,17 +1072,17 @@ def _update_multiple_tasks(
         "tasks": updated_tasks,
     }
     
-    # If we shifted deadlines, navigate to the new date/week/month
-    if deadline_shift_days is not None and updated_tasks:
-        # Get the first updated task's new deadline to determine where to navigate
+    # If we shifted scheduled_date, navigate to the new date/week/month
+    if scheduled_shift_days is not None and updated_tasks:
+        # Get the first updated task's new scheduled_date to determine where to navigate
         first_updated = db.query(Task).filter(Task.id == updated_tasks[0]["id"]).first()
-        if first_updated and first_updated.deadline:
-            target_date = first_updated.deadline.date().isoformat()
+        if first_updated:
+            target_date = first_updated.scheduled_date.date().isoformat()
             
             # Determine view mode based on shift amount
-            if abs(deadline_shift_days) >= 25:  # ~1 month
+            if abs(scheduled_shift_days) >= 25:  # ~1 month
                 view_mode = "monthly"
-            elif abs(deadline_shift_days) >= 6:  # ~1 week
+            elif abs(scheduled_shift_days) >= 6:  # ~1 week
                 view_mode = "weekly"
             else:
                 view_mode = "daily"

@@ -23,7 +23,8 @@ def seed_tasks():
             description="Daily team sync",
             priority=TaskPriority.HIGH.value,
             status=TaskStatus.COMPLETED.value,
-            deadline=today + timedelta(hours=9),
+            scheduled_date=today + timedelta(hours=9),
+            deadline=today + timedelta(hours=9, minutes=30),
             completed_at=today + timedelta(hours=9, minutes=15),
             created_at=today - timedelta(days=1),
         ),
@@ -32,7 +33,8 @@ def seed_tasks():
             description="Code review for authentication module",
             priority=TaskPriority.MEDIUM.value,
             status=TaskStatus.IN_PROGRESS.value,
-            deadline=today + timedelta(hours=11),
+            scheduled_date=today + timedelta(hours=11),
+            deadline=today + timedelta(hours=13),
             created_at=today - timedelta(days=1),
         ),
         Task(
@@ -40,7 +42,8 @@ def seed_tasks():
             description="Discuss Q4 requirements",
             priority=TaskPriority.HIGH.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(hours=13),
+            scheduled_date=today + timedelta(hours=13),
+            deadline=today + timedelta(hours=14),
             created_at=today,
         ),
         Task(
@@ -48,6 +51,7 @@ def seed_tasks():
             description="Implement task filtering endpoints",
             priority=TaskPriority.URGENT.value,
             status=TaskStatus.IN_PROGRESS.value,
+            scheduled_date=today + timedelta(hours=14),
             deadline=today + timedelta(hours=16),
             created_at=today,
         ),
@@ -56,7 +60,7 @@ def seed_tasks():
             description="API docs for new endpoints",
             priority=TaskPriority.LOW.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(hours=17, minutes=30),
+            scheduled_date=today + timedelta(hours=17),
             created_at=today,
         ),
         
@@ -66,7 +70,7 @@ def seed_tasks():
             description="Review new UI mockups",
             priority=TaskPriority.MEDIUM.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=1, hours=10),
+            scheduled_date=today + timedelta(days=1, hours=10),
             created_at=today,
         ),
         Task(
@@ -74,7 +78,8 @@ def seed_tasks():
             description="Push latest changes to staging environment",
             priority=TaskPriority.HIGH.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=1, hours=14),
+            scheduled_date=today + timedelta(days=1, hours=14),
+            deadline=today + timedelta(days=1, hours=17),
             created_at=today,
         ),
         Task(
@@ -82,7 +87,7 @@ def seed_tasks():
             description="Virtual escape room",
             priority=TaskPriority.LOW.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=1, hours=16),
+            scheduled_date=today + timedelta(days=1, hours=16),
             created_at=today,
         ),
         
@@ -92,7 +97,8 @@ def seed_tasks():
             description="Plan Q1 2024 goals",
             priority=TaskPriority.URGENT.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=2, hours=10),
+            scheduled_date=today + timedelta(days=2, hours=10),
+            deadline=today + timedelta(days=2, hours=12),
             created_at=today,
         ),
         Task(
@@ -100,7 +106,7 @@ def seed_tasks():
             description="Migrate to new schema",
             priority=TaskPriority.HIGH.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=3, hours=15),
+            scheduled_date=today + timedelta(days=3, hours=15),
             created_at=today,
         ),
         Task(
@@ -108,7 +114,8 @@ def seed_tasks():
             description="Review authentication flow",
             priority=TaskPriority.URGENT.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=4, hours=11),
+            scheduled_date=today + timedelta(days=4, hours=11),
+            deadline=today + timedelta(days=4, hours=17),
             created_at=today,
         ),
         Task(
@@ -116,7 +123,8 @@ def seed_tasks():
             description="Demo new features",
             priority=TaskPriority.HIGH.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=5, hours=14),
+            scheduled_date=today + timedelta(days=5, hours=14),
+            deadline=today + timedelta(days=5, hours=15),
             created_at=today,
         ),
         
@@ -126,7 +134,7 @@ def seed_tasks():
             description="Plan next 2-week sprint",
             priority=TaskPriority.MEDIUM.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=7, hours=9),
+            scheduled_date=today + timedelta(days=7, hours=9),
             created_at=today,
         ),
         Task(
@@ -134,7 +142,7 @@ def seed_tasks():
             description="Optimize database queries",
             priority=TaskPriority.MEDIUM.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=8, hours=13),
+            scheduled_date=today + timedelta(days=8, hours=13),
             created_at=today,
         ),
         Task(
@@ -142,7 +150,7 @@ def seed_tasks():
             description="Test new onboarding flow",
             priority=TaskPriority.LOW.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=10, hours=15),
+            scheduled_date=today + timedelta(days=10, hours=15),
             created_at=today,
         ),
         
@@ -152,7 +160,7 @@ def seed_tasks():
             description="Prepare performance reviews",
             priority=TaskPriority.MEDIUM.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=20, hours=10),
+            scheduled_date=today + timedelta(days=20, hours=10),
             created_at=today,
         ),
         Task(
@@ -160,7 +168,8 @@ def seed_tasks():
             description="Prepare slides for tech conference",
             priority=TaskPriority.LOW.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=25, hours=14),
+            scheduled_date=today + timedelta(days=25, hours=14),
+            deadline=today + timedelta(days=25, hours=17),
             created_at=today,
         ),
         Task(
@@ -168,7 +177,8 @@ def seed_tasks():
             description="Q1 budget allocation",
             priority=TaskPriority.HIGH.value,
             status=TaskStatus.TODO.value,
-            deadline=today + timedelta(days=28, hours=11),
+            scheduled_date=today + timedelta(days=28, hours=11),
+            deadline=today + timedelta(days=30, hours=17),
             created_at=today,
         ),
         
@@ -178,6 +188,7 @@ def seed_tasks():
             description="Configure GitHub Actions",
             priority=TaskPriority.HIGH.value,
             status=TaskStatus.COMPLETED.value,
+            scheduled_date=today - timedelta(days=3, hours=14),
             deadline=today - timedelta(days=3, hours=15),
             completed_at=today - timedelta(days=3, hours=14),
             created_at=today - timedelta(days=5),
@@ -187,9 +198,21 @@ def seed_tasks():
             description="JWT-based auth system",
             priority=TaskPriority.URGENT.value,
             status=TaskStatus.COMPLETED.value,
+            scheduled_date=today - timedelta(days=5, hours=10),
             deadline=today - timedelta(days=5, hours=12),
             completed_at=today - timedelta(days=5, hours=11, minutes=30),
             created_at=today - timedelta(days=7),
+        ),
+        
+        # MISSED TASK (deadline passed, not completed) - for testing
+        Task(
+            title="Write unit tests",
+            description="Add test coverage for API endpoints",
+            priority=TaskPriority.HIGH.value,
+            status=TaskStatus.IN_PROGRESS.value,
+            scheduled_date=today - timedelta(days=2, hours=10),
+            deadline=today - timedelta(days=1, hours=17),  # Yesterday's deadline
+            created_at=today - timedelta(days=4),
         ),
     ]
     

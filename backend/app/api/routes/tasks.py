@@ -22,6 +22,7 @@ def create_task(task_in: TaskCreate, db: Session = Depends(get_db)) -> Task:
         notes=task_in.notes,
         priority=task_in.priority.value,
         status=task_in.status.value,
+        scheduled_date=task_in.scheduled_date,
         deadline=task_in.deadline,
     )
     db.add(task)
@@ -62,10 +63,10 @@ def list_tasks(
         )
 
     if start_date:
-        query = query.filter(Task.deadline >= start_date)
+        query = query.filter(Task.scheduled_date >= start_date)
 
     if end_date:
-        query = query.filter(Task.deadline <= end_date)
+        query = query.filter(Task.scheduled_date <= end_date)
 
     # Get total count before pagination
     total = query.count()

@@ -14,7 +14,8 @@ export type Task = {
   status: TaskStatus;
   created_at: string;
   updated_at: string;
-  deadline?: string;
+  scheduled_date: string; // When task is planned to be done (REQUIRED)
+  deadline?: string; // When task MUST be completed by (OPTIONAL)
   completed_at?: string;
 };
 
@@ -69,7 +70,8 @@ export async function createTask(task: {
   notes?: string;
   priority?: TaskPriority;
   status?: TaskStatus;
-  deadline?: string;
+  scheduled_date: string; // REQUIRED
+  deadline?: string; // OPTIONAL
 }): Promise<Task> {
   const res = await fetch(`${API_BASE}/tasks`, {
     method: 'POST',

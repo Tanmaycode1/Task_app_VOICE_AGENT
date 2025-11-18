@@ -51,7 +51,12 @@ class Task(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
-    deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    scheduled_date: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False
+    )  # When the task is planned to be done (REQUIRED)
+    deadline: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # When the task MUST be completed by (OPTIONAL)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     def __repr__(self) -> str:
