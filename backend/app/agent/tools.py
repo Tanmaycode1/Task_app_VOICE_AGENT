@@ -351,20 +351,40 @@ def _create_task(
     """Create a new task."""
     
     # Parse deadline and set default time to 12:00 PM if only date is provided
+    # EXCEPTION: If deadline is "tomorrow" (1 day from now) and time is midnight, use today's current time
     parsed_deadline = None
     if deadline:
         try:
             parsed_deadline = datetime.fromisoformat(deadline)
+            now = datetime.utcnow()
+            
+            # Check if this is "tomorrow" (approximately 1 day from now, within 24-48 hours)
+            days_diff = (parsed_deadline.date() - now.date()).days
+            
             # If time is exactly midnight (00:00:00), it means only date was provided
-            # Set default time to 12:00 PM (noon)
             if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
-                parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
+                # Special case: if it's tomorrow, use today's current time
+                if days_diff == 1:
+                    parsed_deadline = parsed_deadline.replace(hour=now.hour, minute=now.minute, second=now.second)
+                else:
+                    # For other dates, default to 12:00 PM (noon)
+                    parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
         except ValueError:
-            # If ISO format fails, try to parse date only and add 12:00 PM
+            # If ISO format fails, try to parse date only
             try:
                 from datetime import date
                 date_only = date.fromisoformat(deadline)
-                parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
+                now = datetime.utcnow()
+                days_diff = (date_only - now.date()).days
+                
+                # If it's tomorrow, use today's current time
+                if days_diff == 1:
+                    parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(
+                        hour=now.hour, minute=now.minute, second=now.second
+                    )
+                else:
+                    # For other dates, default to 12:00 PM
+                    parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
             except ValueError:
                 parsed_deadline = None
     
@@ -650,21 +670,41 @@ def _create_multiple_tasks(db: Session, tasks: list[dict[str, Any]]) -> dict[str
     for i, task_data in enumerate(tasks):
         try:
             # Parse deadline and set default time to 12:00 PM if only date is provided
+            # EXCEPTION: If deadline is "tomorrow" (1 day from now) and time is midnight, use today's current time
             parsed_deadline = None
             deadline = task_data.get("deadline")
             if deadline:
                 try:
                     parsed_deadline = datetime.fromisoformat(deadline)
+                    now = datetime.utcnow()
+                    
+                    # Check if this is "tomorrow" (1 day from now)
+                    days_diff = (parsed_deadline.date() - now.date()).days
+                    
                     # If time is exactly midnight (00:00:00), it means only date was provided
-                    # Set default time to 12:00 PM (noon)
                     if parsed_deadline.hour == 0 and parsed_deadline.minute == 0 and parsed_deadline.second == 0:
-                        parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
+                        # Special case: if it's tomorrow, use today's current time
+                        if days_diff == 1:
+                            parsed_deadline = parsed_deadline.replace(hour=now.hour, minute=now.minute, second=now.second)
+                        else:
+                            # For other dates, default to 12:00 PM (noon)
+                            parsed_deadline = parsed_deadline.replace(hour=12, minute=0, second=0)
                 except ValueError:
-                    # If ISO format fails, try to parse date only and add 12:00 PM
+                    # If ISO format fails, try to parse date only
                     try:
                         from datetime import date
                         date_only = date.fromisoformat(deadline)
-                        parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
+                        now = datetime.utcnow()
+                        days_diff = (date_only - now.date()).days
+                        
+                        # If it's tomorrow, use today's current time
+                        if days_diff == 1:
+                            parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(
+                                hour=now.hour, minute=now.minute, second=now.second
+                            )
+                        else:
+                            # For other dates, default to 12:00 PM
+                            parsed_deadline = datetime.combine(date_only, datetime.min.time()).replace(hour=12)
                     except ValueError:
                         parsed_deadline = None
             

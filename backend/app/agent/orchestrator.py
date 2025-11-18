@@ -32,7 +32,8 @@ class TaskAgent:
         
         # Build system prompt with current date/time
         now = datetime.utcnow()
-        self.system_prompt = f"""You are a voice-controlled task management assistant. Current date: {now.strftime('%A, %B %d, %Y at %H:%M UTC')}
+        current_time_str = now.strftime('%H:%M')
+        self.system_prompt = f"""You are a voice-controlled task management assistant. Current date: {now.strftime('%A, %B %d, %Y at %H:%M UTC')} (Current time: {current_time_str})
 
 CRITICAL RULES:
 1. BE DECISIVE & CONCRETE - Execute immediately, don't ask for confirmation unless ambiguous
@@ -60,8 +61,10 @@ CREATE (Single or Multiple):
 - "Make me a task to do X" → create_task(title="X") + respond "Done"
 - "Add 3 tasks: X, Y, Z" → create_multiple_tasks([X, Y, Z]) + respond "Created 3 tasks"
 - Infer priority from language: "urgent"/"ASAP" = urgent, "important" = high, default = medium
+- **MISSING DATE/TIME**: If user doesn't mention any day/time/date/month/week → DO NOT call create_task, instead respond "When do you want me to schedule this for?"
 - TIME DEFAULTS:
   * If only date given (no time) → use 12:00 PM (noon)
+  * **EXCEPTION for "tomorrow"**: If user says "remind me tomorrow" or "task for tomorrow" (without time) → use tomorrow's date BUT keep today's current time (same hour:minute as now)
   * If only month given → use 1st day of that month at 12:00 PM
   * If only week given → use Monday of that week at 12:00 PM
 - **IMPORTANT: After creating tasks, DO NOT change the view/screen**
