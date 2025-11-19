@@ -213,18 +213,8 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               setAgentResponse(prev => {
                 const updated = prev + text;
                 
-                // Speak early if we have enough content (better perceived speed)
-                // Check for sentence endings or if response is getting long
-                // Only speak if we haven't already spoken this response
-                if (!isSpeaking && !hasSpokenCurrentResponseRef.current && updated.length > 5) {
-                  const hasEnding = updated.match(/[.!?]\s*$/);
-                  const isLongEnough = updated.length > 15;
-                  
-                  if (hasEnding || isLongEnough) {
-                    hasSpokenCurrentResponseRef.current = true;
-                    speak(updated);
-                  }
-                }
+                // Don't speak during streaming - wait for complete response
+                // This prevents speaking only the first chunk
                 
                 return updated;
               });
@@ -252,14 +242,12 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               setIsProcessing(false);
               setToolActivity('');
               
-              // Speak the complete response if we have one and haven't spoken it yet
-              setAgentResponse(currentResponse => {
-                if (currentResponse && currentResponse.trim() && !isSpeaking && !hasSpokenCurrentResponseRef.current) {
-                  hasSpokenCurrentResponseRef.current = true;
-                  speak(currentResponse);
-                }
-                return currentResponse;
-              });
+              // Speak the complete response once
+              // Access agentResponse directly to avoid React's setState double-invoke in dev mode
+              if (!hasSpokenCurrentResponseRef.current && agentResponse && agentResponse.trim()) {
+                hasSpokenCurrentResponseRef.current = true;
+                speak(agentResponse);
+              }
               
               setTimeout(() => {
                 setCurrentTranscript('');
