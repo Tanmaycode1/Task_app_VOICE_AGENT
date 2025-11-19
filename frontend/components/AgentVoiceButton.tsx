@@ -27,7 +27,8 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const isSpeakingRef = useRef(false);
   const hasSpokenCurrentResponseRef = useRef(false);
-  const currentResponseRef = useRef('');
+  const lastSpokenTextRef = useRef<string>('');
+  const currentResponseTextRef = useRef<string>('');
 
   const [isActive, setIsActive] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState('');
@@ -40,64 +41,104 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
 
   // Text-to-Speech
   const speak = useCallback((text: string) => {
-    if (!window.speechSynthesis || !text.trim()) return;
-    
-    // Immediately mute mic to prevent feedback
-    isSpeakingRef.current = true;
-    
-    window.speechSynthesis.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.1;
-    utterance.pitch = 1.0;
-    
-    const voices = window.speechSynthesis.getVoices();
-    
-    // Voice selection priority:
-    // 1. Female voices (prefer "female" in name)
-    // 2. US/UK/AU English (avoid Indian accent)
-    // 3. Local/offline voices (faster, more reliable)
-    
-    const preferredVoice = 
-      // Try female US/UK voices first
-      voices.find(v => 
-        (v.lang === 'en-US' || v.lang === 'en-GB' || v.lang === 'en-AU') && 
-        (v.name.toLowerCase().includes('female') || 
-         v.name.toLowerCase().includes('samantha') ||
-         v.name.toLowerCase().includes('karen') ||
-         v.name.toLowerCase().includes('victoria'))
-      ) ||
-      // Any female English voice
-      voices.find(v => 
-        v.lang.startsWith('en-') && 
-        (v.name.toLowerCase().includes('female') || 
-         v.name.toLowerCase().includes('woman'))
-      ) ||
-      // Any US/UK/AU voice (no Indian accent)
-      voices.find(v => 
-        (v.lang === 'en-US' || v.lang === 'en-GB' || v.lang === 'en-AU') &&
-        !v.name.toLowerCase().includes('india')
-      ) ||
-      // Fallback to any English voice
-      voices.find(v => v.lang.startsWith('en-')) ||
-      voices[0];
-    
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
-      console.log(`🔊 Using voice: ${preferredVoice.name} (${preferredVoice.lang})`);
+    if (!window.speechSynthesis || !text.trim()) {
+      console.log('🔇 speak() skipped - no synthesis or empty text');
+      return;
     }
     
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      isSpeakingRef.current = false;
-    };
-    utterance.onerror = () => {
-      setIsSpeaking(false);
-      isSpeakingRef.current = false;
-    };
+    const trimmedText = text.trim();
     
-    window.speechSynthesis.speak(utterance);
+    // Prevent speaking the same text twice - check BEFORE we do anything
+    if (lastSpokenTextRef.current === trimmedText) {
+      console.log('🔇 Skipping duplicate speak for:', trimmedText.substring(0, 50) + '...');
+      return;
+    }
+    
+    // If already speaking the same text, don't cancel it
+    if (isSpeakingRef.current && window.speechSynthesis.speaking && lastSpokenTextRef.current === trimmedText) {
+      console.log('🔇 Already speaking this text, skipping');
+      return;
+    }
+    
+    console.log('🔊 Starting to speak:', trimmedText.substring(0, 50) + '...', 'Full length:', trimmedText.length);
+    
+    // Only cancel if we're speaking something DIFFERENT
+    if (isSpeakingRef.current && window.speechSynthesis.speaking) {
+      console.log('🛑 Canceling ongoing speech to speak new text');
+      window.speechSynthesis.cancel();
+      // Small delay to let cancel complete before starting new speech
+      setTimeout(() => {
+        createAndSpeak(trimmedText);
+      }, 100);
+      return;
+    }
+    
+    createAndSpeak(trimmedText);
+    
+    function createAndSpeak(trimmedText: string) {
+      // Mark this text as about to be spoken (BEFORE speaking)
+      lastSpokenTextRef.current = trimmedText;
+      
+      const utterance = new SpeechSynthesisUtterance(trimmedText);
+      utterance.rate = 1.1;
+      utterance.pitch = 1.0;
+      
+      const voices = window.speechSynthesis.getVoices();
+      
+      // Voice selection priority:
+      // 1. Female voices (prefer "female" in name)
+      // 2. US/UK/AU English (avoid Indian accent)
+      // 3. Local/offline voices (faster, more reliable)
+      
+      const preferredVoice = 
+        // Try female US/UK voices first
+        voices.find(v => 
+          (v.lang === 'en-US' || v.lang === 'en-GB' || v.lang === 'en-AU') && 
+          (v.name.toLowerCase().includes('female') || 
+           v.name.toLowerCase().includes('samantha') ||
+           v.name.toLowerCase().includes('karen') ||
+           v.name.toLowerCase().includes('victoria'))
+        ) ||
+        // Any female English voice
+        voices.find(v => 
+          v.lang.startsWith('en-') && 
+          (v.name.toLowerCase().includes('female') || 
+           v.name.toLowerCase().includes('woman'))
+        ) ||
+        // Any US/UK/AU voice (no Indian accent)
+        voices.find(v => 
+          (v.lang === 'en-US' || v.lang === 'en-GB' || v.lang === 'en-AU') &&
+          !v.name.toLowerCase().includes('india')
+        ) ||
+        // Fallback to any English voice
+        voices.find(v => v.lang.startsWith('en-')) ||
+        voices[0];
+      
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+        console.log(`🔊 Using voice: ${preferredVoice.name} (${preferredVoice.lang})`);
+      }
+      
+      utterance.onstart = () => {
+        console.log('✅ Speech started');
+        setIsSpeaking(true);
+        hasSpokenCurrentResponseRef.current = true;
+      };
+      utterance.onend = () => {
+        console.log('✅ Speech ended');
+        setIsSpeaking(false);
+      };
+      utterance.onerror = (error) => {
+        console.error('❌ Speech error:', error);
+        setIsSpeaking(false);
+        // Reset last spoken text on error so it can be retried
+        if (lastSpokenTextRef.current === trimmedText) {
+          lastSpokenTextRef.current = '';
+        }
+      };
+      
+      window.speechSynthesis.speak(utterance);
+    }
   }, []);
 
   // Stop speech
@@ -105,7 +146,6 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
-      isSpeakingRef.current = false;
     }
   }, []);
 
@@ -181,6 +221,8 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
                 setAgentResponse('');
                 setToolActivity('');
                 setIsProcessing(false);
+                currentResponseTextRef.current = '';
+                hasSpokenCurrentResponseRef.current = false;
               }
             }
             
@@ -188,7 +230,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               setIsProcessing(true);
               setAgentResponse('');
               setToolActivity('');
-              currentResponseRef.current = ''; // Reset response accumulator
+              currentResponseTextRef.current = '';
               hasSpokenCurrentResponseRef.current = false; // Reset for new response
               
               // Notify parent that processing started (to close choice modal)
@@ -204,7 +246,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
             setIsProcessing(true);
             setAgentResponse('');
             setToolActivity('Processing...');
-            currentResponseRef.current = ''; // Reset response accumulator
+            currentResponseTextRef.current = '';
             hasSpokenCurrentResponseRef.current = false; // Reset for new response
             
             // Notify parent that processing started (to close choice modal)
@@ -225,7 +267,10 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               const text = event.content || '';
               setAgentResponse(prev => {
                 const updated = prev + text;
-                currentResponseRef.current = updated; // Update ref immediately
+                // Keep ref in sync with state
+                currentResponseTextRef.current = updated;
+                // Don't speak during streaming - wait for complete response
+                // This prevents speaking only the first chunk
                 return updated;
               });
             }
@@ -249,20 +294,46 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
             }
             
             else if (event.type === 'done') {
+              console.log('📍 done event received, hasSpoken:', hasSpokenCurrentResponseRef.current);
               setIsProcessing(false);
               setToolActivity('');
               
-              // Speak the complete response once using the ref (always has latest value)
-              if (!hasSpokenCurrentResponseRef.current && currentResponseRef.current && currentResponseRef.current.trim()) {
-                hasSpokenCurrentResponseRef.current = true;
-                speak(currentResponseRef.current);
-              }
+              // Use a delay to ensure all text chunks have been processed and state is updated
+              // The ref should have the latest text, but we'll also check state as fallback
+              setTimeout(() => {
+                // Get text from ref (most up-to-date) or fallback to checking state
+                let responseText = currentResponseTextRef.current.trim();
+                
+                // If ref is empty, try to get from state (shouldn't happen, but safety check)
+                if (!responseText) {
+                  setAgentResponse(currentResponse => {
+                    const stateText = (currentResponse || '').trim();
+                    if (stateText && !hasSpokenCurrentResponseRef.current) {
+                      console.log('✅ Speaking response from state, length:', stateText.length);
+                      hasSpokenCurrentResponseRef.current = true;
+                      speak(stateText);
+                    }
+                    return currentResponse;
+                  });
+                } else {
+                  // Only speak if we haven't spoken this exact response yet
+                  if (!hasSpokenCurrentResponseRef.current) {
+                    console.log('✅ Speaking response from ref, length:', responseText.length);
+                    hasSpokenCurrentResponseRef.current = true;
+                    // Speak directly with the response text
+                    speak(responseText);
+                  } else {
+                    console.log('⚠️ Already spoken, skipping');
+                  }
+                }
+              }, 200); // Increased delay to ensure all text chunks are processed
               
               setTimeout(() => {
                 setCurrentTranscript('');
                 setAgentResponse('');
-                currentResponseRef.current = '';
+                currentResponseTextRef.current = '';
                 hasSpokenCurrentResponseRef.current = false; // Reset for next response
+                lastSpokenTextRef.current = ''; // Reset last spoken text
               }, 3000);
             }
             
@@ -271,6 +342,8 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               setToolActivity('');
               stopSpeaking();
               setAgentResponse('');
+              currentResponseTextRef.current = '';
+              hasSpokenCurrentResponseRef.current = false;
             }
           }
 
@@ -282,6 +355,8 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
             stopSpeaking();
             setAgentResponse('');
             setCurrentTranscript('');
+            currentResponseTextRef.current = '';
+            hasSpokenCurrentResponseRef.current = false;
           }
           
         } catch (err) {
@@ -338,6 +413,8 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
       setIsActive(true);
       setCurrentTranscript('');
       setAgentResponse('');
+      currentResponseTextRef.current = '';
+      hasSpokenCurrentResponseRef.current = false;
       
     } catch (err) {
       console.error('❌ Start failed:', err);
@@ -353,6 +430,9 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
     setCurrentTranscript('');
     setAgentResponse('');
     setToolActivity('');
+    currentResponseTextRef.current = '';
+    hasSpokenCurrentResponseRef.current = false;
+    lastSpokenTextRef.current = '';
   }, [cleanup]);
 
   return (
