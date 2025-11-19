@@ -176,6 +176,12 @@ TOOLS = [
                     "type": "string",
                     "description": "Hard deadline when task MUST be done by - OPTIONAL (ISO 8601 format)",
                 },
+                "status": {
+                    "type": "string",
+                    "enum": ["todo", "in_progress", "completed", "cancelled"],
+                    "description": "Task status (default: todo). If 'completed', completed_at will be set to current time.",
+                    "default": "todo",
+                },
             },
             "required": ["title", "scheduled_date"],
         },
@@ -510,6 +516,7 @@ def _create_task(
     notes: str | None = None,
     priority: str = "medium",
     deadline: str | None = None,
+    status: str = "todo",
 ) -> dict[str, Any]:
     """Create a new task."""
     
@@ -563,14 +570,20 @@ def _create_task(
                 "error": f"Deadline ({parsed_deadline.date()}) cannot be before scheduled date ({parsed_scheduled.date()})"
             }
     
+    # Set completed_at if status is "completed"
+    completed_at = None
+    if status == TaskStatus.COMPLETED.value:
+        completed_at = datetime.utcnow()
+    
     task = Task(
         title=title,
         description=description,
         notes=notes,
         priority=priority,
-        status=TaskStatus.TODO.value,
+        status=status,
         scheduled_date=parsed_scheduled,
         deadline=parsed_deadline,
+        completed_at=completed_at,
     )
     
     db.add(task)
@@ -775,7 +788,14 @@ def _search_tasks(
     status: str | None = None,
     limit: int = 10,
 ) -> dict[str, Any]:
-    """Search for tasks by keyword with optional filters."""
+    """
+    Search for tasks using hybrid approach:
+    1. Exact keyword matching (ILIKE)
+    2. Fuzzy matching for typos and variations
+    """
+    from difflib import SequenceMatcher
+    
+    # Step 1: Keyword search (fast, catches exact and partial matches)
     search_pattern = f"%{query}%"
     
     query_obj = db.query(Task).filter(
@@ -790,7 +810,43 @@ def _search_tasks(
     if status:
         query_obj = query_obj.filter(Task.status == status)
     
-    tasks = query_obj.limit(limit).all()
+    keyword_tasks = query_obj.all()
+    
+    # Step 2: Fuzzy matching on all tasks (catches typos, variations)
+    # Only run if keyword search returns fewer than limit results
+    fuzzy_tasks = []
+    if len(keyword_tasks) < limit:
+        all_tasks_query = db.query(Task)
+        if priority:
+            all_tasks_query = all_tasks_query.filter(Task.priority == priority)
+        if status:
+            all_tasks_query = all_tasks_query.filter(Task.status == status)
+        
+        all_tasks = all_tasks_query.all()
+        query_lower = query.lower()
+        
+        for task in all_tasks:
+            if task in keyword_tasks:
+                continue  # Skip already found tasks
+            
+            # Calculate similarity scores
+            title_similarity = SequenceMatcher(None, query_lower, (task.title or "").lower()).ratio()
+            desc_similarity = SequenceMatcher(None, query_lower, (task.description or "").lower()).ratio() if task.description else 0
+            notes_similarity = SequenceMatcher(None, query_lower, (task.notes or "").lower()).ratio() if task.notes else 0
+            
+            max_similarity = max(title_similarity, desc_similarity, notes_similarity)
+            
+            # Include if similarity is above threshold (0.5 = 50% match)
+            if max_similarity >= 0.5:
+                fuzzy_tasks.append((task, max_similarity))
+        
+        # Sort by similarity score (highest first)
+        fuzzy_tasks.sort(key=lambda x: x[1], reverse=True)
+        fuzzy_tasks = [task for task, _ in fuzzy_tasks]
+    
+    # Combine results: keyword matches first, then fuzzy matches
+    tasks = keyword_tasks + fuzzy_tasks
+    tasks = tasks[:limit]  # Limit total results
     
     result = {
         "success": True,
@@ -927,14 +983,21 @@ def _create_multiple_tasks(db: Session, tasks: list[dict[str, Any]]) -> dict[str
                     errors.append(f"Task {i+1} ('{task_data.get('title', 'Unknown')}'): deadline before scheduled_date")
                     continue
             
+            # Set completed_at if status is "completed"
+            status = task_data.get("status", TaskStatus.TODO.value)
+            completed_at = None
+            if status == TaskStatus.COMPLETED.value:
+                completed_at = datetime.utcnow()
+            
             task = Task(
                 title=task_data["title"],
                 description=task_data.get("description"),
                 notes=task_data.get("notes"),
                 priority=task_data.get("priority", "medium"),
-                status=TaskStatus.TODO.value,
+                status=status,
                 scheduled_date=parsed_scheduled,
                 deadline=parsed_deadline,
+                completed_at=completed_at,
             )
             
             db.add(task)

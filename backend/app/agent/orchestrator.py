@@ -139,40 +139,58 @@ UPDATE (Single or Multiple):
 - "Move all tasks to next month" → list_tasks + update_multiple_tasks(all IDs, scheduled_date_shift_days=30)
 - "Mark X as high priority" → search_tasks("X") + update_task(priority="high")
 - **PARTIAL COMPLETION / AMBIGUOUS UPDATES** (BE SMART):
-  * **DETECT**: Task title has multiple items (connected by "and", "or", commas) BUT user only mentions completing ONE item
+  * **DETECT**: Task title has multiple items (connected by "and", "or", commas) BUT user mentions completing SOME (not all) items
   * **Indicators of multi-item tasks**:
     - "buy shirts and jeans", "shirts, jeans, and shoes"
     - "finish report and presentation"
     - "call mom and dad"
     - "clean kitchen, bathroom, and bedroom"
-  * **When user says**: "I bought the jeans" / "finished the report" / "called mom"
+    - "buy a, b, c, d, e" (many items)
+  * **When user says**: "I bought the jeans" / "finished the report" / "called mom" / "completed a, c, and e"
     1. Search for the task
     2. **ANALYZE**: Does task title contain multiple items?
-    3. If YES and user only completed ONE:
+    3. **ANALYZE**: Did user complete ALL items or just SOME?
+    4. If task has MULTIPLE items AND user completed SOME (not all):
        - **USE show_choices modal**: show_choices(title="Task has multiple items", choices=[
            {{"id":"1", "label":"Complete", "description":"Mark entire task as complete", "value":"mark_complete"}},
-           {{"id":"2", "label":"Split", "description":"Split into two tasks and mark one done", "value":"split"}}
+           {{"id":"2", "label":"Split", "description":"Split into two tasks: completed items and remaining items", "value":"split"}}
          ])
        - **Wait for response from modal**
-    4. **If user selects "split"**:
+    5. **If user selects "split"** - PERFORM SEQUENTIALLY:
        a. Get original task details (scheduled_date, deadline, priority, etc.)
-       b. Delete original task
-       c. Create 2 new tasks (split the items intelligently):
-          - Task 1: The completed item (status="completed", completed_at=now)
-          - Task 2: The remaining item(s) (status="todo")
-       d. Both tasks keep same scheduled_date, deadline, priority
-       e. Respond: "Split and marked"
-    5. **If user says "mark it complete" / "yes" / "done"**:
+       b. **ANALYZE**: Identify which items user completed vs which are remaining
+       c. **FIRST**: Create 2 new tasks (merge intelligently):
+          - **Task 1 (COMPLETED)**: Merge ALL completed items into ONE task
+            * Title: Combine completed items (e.g., "buy a, c, and e" or "buy chocolates and toffees")
+            * Status: **MUST be "completed"** (not "todo" or "in_progress")
+            * completed_at: **MUST be set to current time** (now)
+            * Keep original scheduled_date, deadline, priority
+          - **Task 2 (REMAINING)**: Merge ALL remaining/ongoing items into ONE task
+            * Title: Combine remaining items (e.g., "buy b and d" or "buy toffees")
+            * Status: **MUST be "todo"** (not "completed")
+            * Keep original scheduled_date, deadline, priority
+       d. **THEN**: Delete original task (delete_task with old task_id)
+       e. **NAVIGATE**: Navigate to the week where the split tasks are scheduled
+         * Use change_ui_view(view_mode="weekly", target_date=[original_scheduled_date])
+         * This shows the user where the split tasks are located
+       f. Respond: "Split and marked"
+       g. **CRITICAL**: Do ALL steps in ONE response - create both tasks, then delete original, then navigate
+    6. **If user says "mark it complete" / "yes" / "done"**:
        - Just update_task(status="completed")
        - Respond: "Marked complete"
   * **Examples**:
-    - User: "I bought the jeans" → You: "Mark complete or split into two?"
-    - User: "Split it" → You: [delete + create 2 tasks] + "Split and marked"
+    - User: "I bought the jeans" (task: "buy shirts and jeans") → You: "Mark complete or split?"
+      - Split: Task 1="buy jeans" (completed), Task 2="buy shirts" (todo)
+    - User: "completed a, c, and e" (task: "buy a, b, c, d, e") → You: "Mark complete or split?"
+      - Split: Task 1="buy a, c, and e" (completed), Task 2="buy b and d" (todo)
+    - User: "completed a" (task: "buy a, b, c, d, e") → You: "Mark complete or split?"
+      - Split: Task 1="buy a" (completed), Task 2="buy b, c, d, and e" (todo)
+    - User: "Split it" → You: [create 2 tasks + delete original] + "Split and marked"
     - User: "Just mark it done" → You: [update_task] + "Marked complete"
   * **DON'T ASK if**:
     - User says "mark X as complete" (explicit instruction)
     - Task has only ONE item
-    - User completed ALL items mentioned
+    - User completed ALL items mentioned (all done = just mark complete)
 - **DATE SHIFTING WITH DEADLINE VALIDATION**:
   * "next week" = EXACTLY +7 days from current scheduled_date
   * "next month" = EXACTLY +30 days from current scheduled_date
@@ -388,7 +406,7 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                 # Stream response from Claude
                 with self.client.messages.stream(
                     model=self.model,
-                    max_tokens=2048,  # Increased for bulk operations and longer responses
+                    max_tokens=4096,  # Doubled for Sonnet 4.5 - supports longer responses and complex operations
                     system=self.system_prompt,
                     tools=TOOLS,
                     messages=messages,
@@ -427,8 +445,19 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                         # Content block stop
                         elif event.type == "content_block_stop":
                             if current_tool_use:
-                                # Parse complete tool input
-                                tool_input = json.loads(current_tool_input)
+                                # Parse complete tool input with error handling
+                                try:
+                                    # Handle empty or whitespace input
+                                    if not current_tool_input or not current_tool_input.strip():
+                                        logger.warning(f"Empty tool input for {current_tool_use['name']}, using empty dict")
+                                        tool_input = {}
+                                    else:
+                                        tool_input = json.loads(current_tool_input)
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"Failed to parse tool input for {current_tool_use['name']}: {e}")
+                                    logger.error(f"Raw input: {repr(current_tool_input)}")
+                                    # Use empty dict as fallback
+                                    tool_input = {}
                                 
                                 yield {
                                     "type": "tool_use",
@@ -436,12 +465,19 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                                     "input": tool_input,
                                 }
                                 
-                                # Execute tool
-                                tool_result = execute_tool(
-                                    current_tool_use["name"],
-                                    tool_input,
-                                    self.db,
-                                )
+                                # Execute tool with error handling
+                                try:
+                                    tool_result = execute_tool(
+                                        current_tool_use["name"],
+                                        tool_input,
+                                        self.db,
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Tool execution failed for {current_tool_use['name']}: {e}")
+                                    tool_result = {
+                                        "success": False,
+                                        "error": f"Tool execution failed: {str(e)}"
+                                    }
                                 
                                 yield {
                                     "type": "tool_result",
@@ -625,7 +661,7 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
             
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=8192,  # Doubled for Sonnet 4.5 - supports longer responses
                 system=self.system_prompt,
                 tools=TOOLS,
                 messages=messages,

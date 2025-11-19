@@ -66,8 +66,8 @@ export default function ChoiceModal({
                 key={choice.id}
                 className="flex items-start gap-4 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50"
               >
-                {/* Choice Label Badge */}
-                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-600 font-bold text-white text-sm shadow-sm">
+                {/* Choice Label Badge - Dynamic width for single letters or words */}
+                <div className="flex h-8 min-w-8 w-auto flex-shrink-0 items-center justify-center rounded-lg bg-emerald-600 font-bold text-white text-sm shadow-sm px-2">
                   {choice.label}
                 </div>
                 
