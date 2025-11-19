@@ -27,6 +27,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const isSpeakingRef = useRef(false);
   const hasSpokenCurrentResponseRef = useRef(false);
+  const currentResponseRef = useRef('');
 
   const [isActive, setIsActive] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState('');
@@ -40,6 +41,9 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
   // Text-to-Speech
   const speak = useCallback((text: string) => {
     if (!window.speechSynthesis || !text.trim()) return;
+    
+    // Immediately mute mic to prevent feedback
+    isSpeakingRef.current = true;
     
     window.speechSynthesis.cancel();
     
@@ -84,8 +88,14 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
     }
     
     utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      isSpeakingRef.current = false;
+    };
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      isSpeakingRef.current = false;
+    };
     
     window.speechSynthesis.speak(utterance);
   }, []);
@@ -95,6 +105,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
+      isSpeakingRef.current = false;
     }
   }, []);
 
@@ -177,6 +188,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               setIsProcessing(true);
               setAgentResponse('');
               setToolActivity('');
+              currentResponseRef.current = ''; // Reset response accumulator
               hasSpokenCurrentResponseRef.current = false; // Reset for new response
               
               // Notify parent that processing started (to close choice modal)
@@ -192,6 +204,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
             setIsProcessing(true);
             setAgentResponse('');
             setToolActivity('Processing...');
+            currentResponseRef.current = ''; // Reset response accumulator
             hasSpokenCurrentResponseRef.current = false; // Reset for new response
             
             // Notify parent that processing started (to close choice modal)
@@ -212,10 +225,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               const text = event.content || '';
               setAgentResponse(prev => {
                 const updated = prev + text;
-                
-                // Don't speak during streaming - wait for complete response
-                // This prevents speaking only the first chunk
-                
+                currentResponseRef.current = updated; // Update ref immediately
                 return updated;
               });
             }
@@ -242,16 +252,16 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               setIsProcessing(false);
               setToolActivity('');
               
-              // Speak the complete response once
-              // Access agentResponse directly to avoid React's setState double-invoke in dev mode
-              if (!hasSpokenCurrentResponseRef.current && agentResponse && agentResponse.trim()) {
+              // Speak the complete response once using the ref (always has latest value)
+              if (!hasSpokenCurrentResponseRef.current && currentResponseRef.current && currentResponseRef.current.trim()) {
                 hasSpokenCurrentResponseRef.current = true;
-                speak(agentResponse);
+                speak(currentResponseRef.current);
               }
               
               setTimeout(() => {
                 setCurrentTranscript('');
                 setAgentResponse('');
+                currentResponseRef.current = '';
                 hasSpokenCurrentResponseRef.current = false; // Reset for next response
               }, 3000);
             }
