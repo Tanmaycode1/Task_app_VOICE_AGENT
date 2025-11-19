@@ -1,11 +1,14 @@
 """Tool definitions for the task management agent."""
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.models.task import Task, TaskPriority, TaskStatus
+
+logger = logging.getLogger(__name__)
 
 # Tool schemas for Claude
 TOOLS = [
@@ -364,8 +367,49 @@ TOOLS = [
                     "enum": ["all", "urgent", "high", "medium", "low"],
                     "description": "Filter tasks by priority (only applicable for list view)",
                 },
+                "filter_missed": {
+                    "type": "string",
+                    "enum": ["all", "missed", "not_missed"],
+                    "description": "Filter tasks by missed status (only applicable for list view). 'missed' = tasks with deadline passed and not completed, 'not_missed' = all other tasks.",
+                },
+                "filter_start_date": {
+                    "type": "string",
+                    "description": "Filter tasks scheduled on or after this date (YYYY-MM-DD format, only applicable for list view). Optional.",
+                },
+                "filter_end_date": {
+                    "type": "string",
+                    "description": "Filter tasks scheduled on or before this date (YYYY-MM-DD format, only applicable for list view). Optional.",
+                },
             },
             "required": ["view_mode"],
+        },
+    },
+    {
+        "name": "load_full_history",
+        "description": "🧠 INTELLIGENT MEMORY SEARCH - Find relevant conversations using semantic search.\n\n🎯 SMART USAGE:\n• 'revert most recent delete' → search_terms=['delete'], tools=['delete_task'], limit=2\n• 'restore documentation task' → search_terms=['documentation', 'delete'], tools=['delete_task'], limit=3\n• 'approve the plan' → search_terms=['plan'], tools=['create_multiple_tasks'], limit=2\n• 'undo last change' → search_terms=['update', 'delete'], limit=2\n• 'what tasks did I create yesterday?' → search_terms=['create', 'yesterday'], tools=['create_task']\n\n💡 HOW IT WORKS:\n1. Searches conversation content (user queries, agent responses) using fuzzy matching\n2. Filters by specific tools used (delete_task, create_task, update_task, etc.)\n3. Returns MOST RELEVANT cycles, not just recent ones\n4. Combines recency + relevance scoring\n\n✅ USE WHEN:\n- User asks to revert/undo/restore → search for delete/update operations\n- User references past plans → search for 'plan' + create_multiple_tasks\n- User asks 'what did I...' → search for relevant keywords + tools\n- Need specific past context → search with keywords from user query\n\n⚡ BE SMART: Extract keywords from user query, identify relevant tools, search intelligently.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_terms": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Keywords to search for in conversations (fuzzy matched). Extract from user query: ['delete', 'documentation'], ['plan', 'week'], ['create', 'meeting'], etc. Empty = get recent only.",
+                    "default": [],
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by tools used: 'delete_task', 'update_task', 'create_task', 'create_multiple_tasks', 'show_choices'. Empty = any tool.",
+                    "default": [],
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max conversation cycles to return. Default: 2. Use 3 for broader search.",
+                    "default": 2,
+                    "minimum": 1,
+                    "maximum": 5,
+                },
+            },
         },
     },
 ]
@@ -373,31 +417,65 @@ TOOLS = [
 
 def execute_tool(tool_name: str, tool_input: dict[str, Any], db: Session) -> dict[str, Any]:
     """Execute a tool and return the result."""
+    # Format tool input for logging (exclude large dicts/lists)
+    input_str = ", ".join(
+        f"{k}={v}" 
+        for k, v in tool_input.items() 
+        if not isinstance(v, (dict, list)) or len(str(v)) < 100
+    )
     
-    if tool_name == "list_tasks":
-        return _list_tasks(db, **tool_input)
-    elif tool_name == "create_task":
-        return _create_task(db, **tool_input)
-    elif tool_name == "create_multiple_tasks":
-        return _create_multiple_tasks(db, **tool_input)
-    elif tool_name == "show_choices":
-        return _show_choices(**tool_input)
-    elif tool_name == "update_task":
-        return _update_task(db, **tool_input)
-    elif tool_name == "update_multiple_tasks":
-        return _update_multiple_tasks(db, **tool_input)
-    elif tool_name == "delete_task":
-        return _delete_task(db, **tool_input)
-    elif tool_name == "delete_multiple_tasks":
-        return _delete_multiple_tasks(db, **tool_input)
-    elif tool_name == "get_task_stats":
-        return _get_task_stats(db)
-    elif tool_name == "search_tasks":
-        return _search_tasks(db, **tool_input)
-    elif tool_name == "change_ui_view":
-        return _change_ui_view(**tool_input)
-    else:
-        return {"error": f"Unknown tool: {tool_name}"}
+    logger.info(f"🔧 TOOL: {tool_name}({input_str})")
+    
+    try:
+        if tool_name == "list_tasks":
+            result = _list_tasks(db, **tool_input)
+        elif tool_name == "create_task":
+            result = _create_task(db, **tool_input)
+        elif tool_name == "create_multiple_tasks":
+            result = _create_multiple_tasks(db, **tool_input)
+        elif tool_name == "show_choices":
+            result = _show_choices(**tool_input)
+        elif tool_name == "update_task":
+            result = _update_task(db, **tool_input)
+        elif tool_name == "update_multiple_tasks":
+            result = _update_multiple_tasks(db, **tool_input)
+        elif tool_name == "delete_task":
+            result = _delete_task(db, **tool_input)
+        elif tool_name == "delete_multiple_tasks":
+            result = _delete_multiple_tasks(db, **tool_input)
+        elif tool_name == "get_task_stats":
+            result = _get_task_stats(db)
+        elif tool_name == "search_tasks":
+            result = _search_tasks(db, **tool_input)
+        elif tool_name == "change_ui_view":
+            result = _change_ui_view(**tool_input)
+        elif tool_name == "load_full_history":
+            result = _load_full_history(db, **tool_input)
+        else:
+            result = {"error": f"Unknown tool: {tool_name}"}
+        
+        # Log result status
+        if isinstance(result, dict):
+            if result.get("success") is False:
+                logger.warning(f"⚠️  TOOL RESULT: {tool_name} - Failed: {result.get('error', 'Unknown error')}")
+            else:
+                success_msg = result.get("message", "Completed")
+                if "tasks" in result:
+                    task_count = len(result.get("tasks", []))
+                    logger.info(f"✅ TOOL RESULT: {tool_name} - {success_msg} ({task_count} tasks)")
+                elif "deleted" in result:
+                    deleted_count = len(result.get("deleted", []))
+                    logger.info(f"✅ TOOL RESULT: {tool_name} - {success_msg} ({deleted_count} deleted)")
+                elif "history" in result:
+                    cycles = result.get("cycles_loaded", 0)
+                    logger.info(f"✅ TOOL RESULT: {tool_name} - {success_msg} ({cycles} cycles)")
+                else:
+                    logger.info(f"✅ TOOL RESULT: {tool_name} - {success_msg}")
+        
+        return result
+    except Exception as e:
+        logger.error(f"❌ TOOL ERROR: {tool_name} - {str(e)}", exc_info=True)
+        return {"success": False, "error": str(e)}
 
 
 def _show_choices(
@@ -609,6 +687,23 @@ def _create_task(
     return result
 
 
+def _serialize_task_state(task: Task) -> dict[str, Any]:
+    """Serialize task state for storing in tool results for revert operations."""
+    return {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description,
+        "notes": task.notes,
+        "priority": task.priority,
+        "status": task.status,
+        "scheduled_date": task.scheduled_date.isoformat() if task.scheduled_date else None,
+        "deadline": task.deadline.isoformat() if task.deadline else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+    }
+
+
 def _update_task(
     db: Session,
     task_id: int,
@@ -627,6 +722,9 @@ def _update_task(
     
     if not task:
         return {"success": False, "error": f"Task with ID {task_id} not found"}
+    
+    # Store original state BEFORE making changes (for revert operations)
+    original_state = _serialize_task_state(task)
     
     def parse_date(date_str: str) -> datetime:
         """Parse date with 12 PM default for midnight times."""
@@ -712,6 +810,7 @@ def _update_task(
             "scheduled_date": task.scheduled_date.isoformat(),
             "deadline": task.deadline.isoformat() if task.deadline else None,
         },
+        "original_state": original_state,  # Store original state for revert operations
     }
     
     # If scheduled_date changed significantly, navigate to new date
@@ -744,6 +843,9 @@ def _delete_task(db: Session, task_id: int) -> dict[str, Any]:
     if not task:
         return {"success": False, "error": f"Task with ID {task_id} not found"}
     
+    # Store original state BEFORE deletion (for revert operations)
+    original_state = _serialize_task_state(task)
+    
     title = task.title
     db.delete(task)
     db.commit()
@@ -751,6 +853,7 @@ def _delete_task(db: Session, task_id: int) -> dict[str, Any]:
     return {
         "success": True,
         "message": f"Task '{title}' deleted successfully",
+        "original_state": original_state,  # Store original state for revert operations
     }
 
 
@@ -892,6 +995,9 @@ def _change_ui_view(
     sort_order: str | None = None,
     filter_status: str | None = None,
     filter_priority: str | None = None,
+    filter_missed: str | None = None,
+    filter_start_date: str | None = None,
+    filter_end_date: str | None = None,
 ) -> dict[str, Any]:
     """
     Change the UI view and date selection.
@@ -927,6 +1033,18 @@ def _change_ui_view(
         if filter_priority and filter_priority != "all":
             result["ui_command"]["filter_priority"] = filter_priority
             result["message"] += f", filtered by priority: {filter_priority}"
+        
+        if filter_missed and filter_missed != "all":
+            result["ui_command"]["filter_missed"] = filter_missed
+            result["message"] += f", filtered by missed: {filter_missed}"
+        
+        if filter_start_date:
+            result["ui_command"]["filter_start_date"] = filter_start_date
+            result["message"] += f", from {filter_start_date}"
+        
+        if filter_end_date:
+            result["ui_command"]["filter_end_date"] = filter_end_date
+            result["message"] += f", until {filter_end_date}"
     
     return result
 
@@ -1036,6 +1154,7 @@ def _update_multiple_tasks(
 ) -> dict[str, Any]:
     """Update multiple tasks at once."""
     updated_tasks = []
+    original_states = []  # Store original states for revert operations
     errors = []
     
     # Handle scheduled_date_shift_days for bulk date shifting
@@ -1049,6 +1168,9 @@ def _update_multiple_tasks(
             if not task:
                 errors.append(f"Task ID {task_id} not found")
                 continue
+            
+            # Store original state BEFORE making changes (for revert operations)
+            original_states.append(_serialize_task_state(task))
             
             # Apply simple updates
             if "title" in updates:
@@ -1133,6 +1255,7 @@ def _update_multiple_tasks(
         "success": True,
         "message": f"{len(updated_tasks)} tasks updated successfully",
         "tasks": updated_tasks,
+        "original_states": original_states,  # Store original states for revert operations
     }
     
     # If we shifted scheduled_date, navigate to the new date/week/month
@@ -1162,6 +1285,7 @@ def _update_multiple_tasks(
 def _delete_multiple_tasks(db: Session, task_ids: list[int]) -> dict[str, Any]:
     """Delete multiple tasks at once."""
     deleted_tasks = []
+    original_states = []  # Store original states for revert operations
     errors = []
     
     for task_id in task_ids:
@@ -1171,6 +1295,9 @@ def _delete_multiple_tasks(db: Session, task_ids: list[int]) -> dict[str, Any]:
             if not task:
                 errors.append(f"Task ID {task_id} not found")
                 continue
+            
+            # Store original state BEFORE deletion (for revert operations)
+            original_states.append(_serialize_task_state(task))
             
             deleted_tasks.append({"id": task.id, "title": task.title})
             db.delete(task)
@@ -1183,6 +1310,7 @@ def _delete_multiple_tasks(db: Session, task_ids: list[int]) -> dict[str, Any]:
             "success": False,
             "error": f"Failed to delete some tasks. Errors: {'; '.join(errors)}",
             "deleted": deleted_tasks,
+            "original_states": original_states,  # Store original states even on partial failure
         }
     
     db.commit()
@@ -1191,5 +1319,193 @@ def _delete_multiple_tasks(db: Session, task_ids: list[int]) -> dict[str, Any]:
         "success": True,
         "message": f"{len(deleted_tasks)} tasks deleted successfully",
         "tasks": deleted_tasks,
+        "original_states": original_states,  # Store original states for revert operations
     }
+
+
+def _load_full_history(
+    db: Session,
+    search_terms: list[str] | None = None,
+    tools: list[str] | None = None,
+    limit: int = 2,
+) -> dict[str, Any]:
+    """
+    Intelligent semantic search across conversation history.
+    
+    Searches for relevant conversations using:
+    1. Fuzzy keyword matching in user queries and agent responses
+    2. Tool filtering (e.g., find all delete operations)
+    3. Recency + relevance scoring
+    
+    Returns top N most relevant conversation cycles.
+    """
+    from app.models.conversation import ConversationMessage
+    from difflib import SequenceMatcher
+    import json
+    
+    search_terms = search_terms or []
+    tools = tools or []
+    limit = max(1, min(5, limit))
+    
+    try:
+        # Fetch last 50 messages for searching (covers ~12-15 cycles)
+        all_messages = (
+            db.query(ConversationMessage)
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(50)
+            .all()
+        )
+        all_messages.reverse()
+        
+        # Group into cycles (user query → assistant responses with tools)
+        cycles = []
+        current_cycle = {"messages": [], "user_query": "", "tools_used": [], "created_at": None}
+        
+        for msg in all_messages:
+            is_user_query = msg.role == "user" and msg.content and not msg.tool_results
+            
+            if is_user_query and current_cycle["messages"]:
+                cycles.append(current_cycle)
+                current_cycle = {"messages": [], "user_query": "", "tools_used": [], "created_at": None}
+            
+            current_cycle["messages"].append(msg)
+            
+            if is_user_query:
+                current_cycle["user_query"] = msg.content.lower()
+                current_cycle["created_at"] = msg.created_at
+            
+            # Extract tools from assistant messages
+            if msg.role == "assistant" and msg.tool_calls:
+                try:
+                    tool_calls = json.loads(msg.tool_calls)
+                    for tc in tool_calls:
+                        if isinstance(tc, dict) and "name" in tc:
+                            current_cycle["tools_used"].append(tc["name"])
+                            
+                            # Store full tool call details for reverts
+                            if "input" in tc:
+                                current_cycle["messages"][-1]._tool_details = {
+                                    "name": tc["name"],
+                                    "input": tc["input"]
+                                }
+                except:
+                    pass
+            
+            # Store tool results for context
+            if msg.role == "user" and msg.tool_results:
+                try:
+                    results = json.loads(msg.tool_results)
+                    for result in results:
+                        if isinstance(result, dict) and "content" in result:
+                            try:
+                                content = json.loads(result["content"]) if isinstance(result["content"], str) else result["content"]
+                                if isinstance(content, dict) and "original_state" in content:
+                                    current_cycle["messages"][-1]._original_state = content["original_state"]
+                                if isinstance(content, dict) and "original_states" in content:
+                                    current_cycle["messages"][-1]._original_states = content["original_states"]
+                            except:
+                                pass
+                except:
+                    pass
+        
+        if current_cycle["messages"]:
+            cycles.append(current_cycle)
+        
+        if not cycles:
+            return {"success": True, "history": [], "message": "No conversation history found"}
+        
+        # Score cycles by relevance
+        scored_cycles = []
+        for idx, cycle in enumerate(cycles):
+            score = 0.0
+            recency_score = (idx + 1) / len(cycles)  # Newer = higher (0 to 1)
+            
+            # Tool filtering (high weight)
+            if tools:
+                tool_match = any(t in cycle["tools_used"] for t in tools)
+                if tool_match:
+                    score += 5.0  # Strong boost for tool match
+                else:
+                    continue  # Skip if tool filter doesn't match
+            
+            # Keyword matching with fuzzy logic
+            if search_terms:
+                query_text = cycle["user_query"]
+                for term in search_terms:
+                    term_lower = term.lower()
+                    
+                    # Exact match
+                    if term_lower in query_text:
+                        score += 3.0
+                        continue
+                    
+                    # Fuzzy match (check each word in query)
+                    words = query_text.split()
+                    for word in words:
+                        if len(word) < 3:
+                            continue
+                        similarity = SequenceMatcher(None, term_lower, word).ratio()
+                        if similarity > 0.75:
+                            score += 2.0 * similarity
+                            break
+            else:
+                # No search terms = just use recency
+                score += recency_score
+            
+            # Recency bonus (small)
+            score += recency_score * 0.5
+            
+            scored_cycles.append((score, cycle))
+        
+        # Sort by score (highest first) and take top N
+        scored_cycles.sort(key=lambda x: x[0], reverse=True)
+        top_cycles = [cycle for score, cycle in scored_cycles[:limit] if score > 0]
+        
+        # Sort selected cycles chronologically for readability
+        top_cycles.sort(key=lambda c: c["created_at"] if c["created_at"] else datetime.min)
+        
+        # Format output
+        history_summary = []
+        for cycle in top_cycles:
+            for msg in cycle["messages"]:
+                msg_data = {
+                    "role": msg.role,
+                    "content": msg.content if len(msg.content) <= 300 else msg.content[:300] + "...",
+                    "created_at": msg.created_at.isoformat(),
+                }
+                
+                if msg.tool_calls:
+                    try:
+                        tool_calls = json.loads(msg.tool_calls)
+                        msg_data["tools_used"] = [tc.get("name") for tc in tool_calls if isinstance(tc, dict)]
+                    except:
+                        pass
+                
+                if msg.tool_results and hasattr(msg, "_original_state"):
+                    msg_data["original_state"] = msg._original_state
+                
+                if msg.tool_results and hasattr(msg, "_original_states"):
+                    msg_data["original_states"] = msg._original_states
+                
+                if msg.tool_results:
+                    msg_data["is_tool_result"] = True
+                
+                history_summary.append(msg_data)
+        
+        search_info = []
+        if search_terms:
+            search_info.append(f"keywords: {', '.join(search_terms)}")
+        if tools:
+            search_info.append(f"tools: {', '.join(tools)}")
+        
+        return {
+            "success": True,
+            "history": history_summary,
+            "cycles_loaded": len(top_cycles),
+            "total_cycles_searched": len(cycles),
+            "message": f"Found {len(top_cycles)} relevant cycle(s)" + (f" matching {' + '.join(search_info)}" if search_info else " (recent)"),
+        }
+    
+    except Exception as e:
+        return {"success": False, "error": f"Failed to search history: {str(e)}"}
 

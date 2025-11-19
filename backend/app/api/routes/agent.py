@@ -38,8 +38,7 @@ async def agent_websocket(websocket: WebSocket, db: Session = Depends(get_db)):
     logger.info("✅ Agent websocket connected")
     
     # Get session ID
-    session_id = dict(websocket.query_params).get("session_id")
-    agent = TaskAgent(db, session_id=session_id)
+    agent = TaskAgent(db)
     
     # Build Deepgram URL
     query_params = websocket.url.query or "model=flux-general-en&sample_rate=16000&encoding=linear16&eot_threshold=0.9"
@@ -170,16 +169,9 @@ async def agent_websocket(websocket: WebSocket, db: Session = Depends(get_db)):
                                     logger.error(f"❌ Agent error (attempt {retry + 1}): {e}")
                                     
                                     if retry == 1:
-                                        # Clear history on final failure
-                                        try:
-                                            from app.models.conversation import ConversationMessage
-                                            db.query(ConversationMessage).filter(
-                                                ConversationMessage.session_id == session_id
-                                            ).delete()
-                                            db.commit()
-                                            logger.info("🧹 Cleared conversation history")
-                                        except Exception:
-                                            pass
+                                        # Note: History is global now, so we don't clear on error
+                                        # to preserve context across all conversations
+                                        logger.info("⚠️ Agent error - history preserved for context")
                                         
                                         await websocket.send_text(json.dumps({
                                             "type": "agent_error",

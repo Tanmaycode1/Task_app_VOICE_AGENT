@@ -14,7 +14,6 @@ class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    session_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # user, assistant
     content: Mapped[str] = mapped_column(Text, nullable=False)
     
@@ -27,5 +26,5 @@ class ConversationMessage(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<ConversationMessage(id={self.id}, session={self.session_id}, role={self.role})>"
+        return f"<ConversationMessage(id={self.id}, role={self.role})>"
 

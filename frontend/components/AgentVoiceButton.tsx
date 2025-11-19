@@ -26,6 +26,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const isSpeakingRef = useRef(false);
+  const hasSpokenCurrentResponseRef = useRef(false);
 
   const [isActive, setIsActive] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState('');
@@ -176,6 +177,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               setIsProcessing(true);
               setAgentResponse('');
               setToolActivity('');
+              hasSpokenCurrentResponseRef.current = false; // Reset for new response
               
               // Notify parent that processing started (to close choice modal)
               if (onProcessingStart) {
@@ -190,6 +192,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
             setIsProcessing(true);
             setAgentResponse('');
             setToolActivity('Processing...');
+            hasSpokenCurrentResponseRef.current = false; // Reset for new response
             
             // Notify parent that processing started (to close choice modal)
             if (onProcessingStart) {
@@ -212,11 +215,13 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
                 
                 // Speak early if we have enough content (better perceived speed)
                 // Check for sentence endings or if response is getting long
-                if (!isSpeaking && updated.length > 5) {
+                // Only speak if we haven't already spoken this response
+                if (!isSpeaking && !hasSpokenCurrentResponseRef.current && updated.length > 5) {
                   const hasEnding = updated.match(/[.!?]\s*$/);
                   const isLongEnough = updated.length > 15;
                   
                   if (hasEnding || isLongEnough) {
+                    hasSpokenCurrentResponseRef.current = true;
                     speak(updated);
                   }
                 }
@@ -247,9 +252,10 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               setIsProcessing(false);
               setToolActivity('');
               
-              // Speak the complete response if we have one
+              // Speak the complete response if we have one and haven't spoken it yet
               setAgentResponse(currentResponse => {
-                if (currentResponse && currentResponse.trim() && !isSpeaking) {
+                if (currentResponse && currentResponse.trim() && !isSpeaking && !hasSpokenCurrentResponseRef.current) {
+                  hasSpokenCurrentResponseRef.current = true;
                   speak(currentResponse);
                 }
                 return currentResponse;
@@ -258,6 +264,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
               setTimeout(() => {
                 setCurrentTranscript('');
                 setAgentResponse('');
+                hasSpokenCurrentResponseRef.current = false; // Reset for next response
               }, 3000);
             }
             

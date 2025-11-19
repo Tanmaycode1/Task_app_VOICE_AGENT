@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 
 import { AgentVoiceButton } from '@/components/AgentVoiceButton';
 import { TaskModal } from '@/components/TaskModal';
@@ -32,6 +33,9 @@ export default function Home() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
+  const [missedFilter, setMissedFilter] = useState<string>('all');
+  const [startDateFilter, setStartDateFilter] = useState<string>('');
+  const [endDateFilter, setEndDateFilter] = useState<string>('');
   
   // Search mode for displaying specific search results
   const [searchResultIds, setSearchResultIds] = useState<number[] | null>(null);
@@ -89,6 +93,19 @@ export default function Home() {
       if (!searchResultIds) {
         if (statusFilter !== 'all') params.status = statusFilter;
         if (priorityFilter !== 'all') params.priority = priorityFilter;
+        // Apply date filters in list view (optional)
+        if (viewMode === 'list') {
+          if (startDateFilter) {
+            const start = new Date(startDateFilter);
+            start.setHours(0, 0, 0, 0);
+            params.start_date = start.toISOString();
+          }
+          if (endDateFilter) {
+            const end = new Date(endDateFilter);
+            end.setHours(23, 59, 59, 999);
+            params.end_date = end.toISOString();
+          }
+        }
       }
 
       const [tasksRes, statsRes] = await Promise.all([
@@ -153,12 +170,12 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [viewMode, selectedDate, sortField, sortOrder, statusFilter, priorityFilter, searchResultIds, searchQuery]);
+  }, [viewMode, selectedDate, sortField, sortOrder, statusFilter, priorityFilter, missedFilter, startDateFilter, endDateFilter, searchResultIds, searchQuery]);
 
   useEffect(() => {
     loadTasks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, selectedDate, sortField, sortOrder, statusFilter, priorityFilter]);
+  }, [viewMode, selectedDate, sortField, sortOrder, statusFilter, priorityFilter, missedFilter, startDateFilter, endDateFilter]);
 
   const handleTaskClick = (task: Task) => {
     setSelectedTask(task);
@@ -179,6 +196,9 @@ export default function Home() {
       sort_order?: string;
       filter_status?: string;
       filter_priority?: string;
+      filter_missed?: string;
+      filter_start_date?: string;
+      filter_end_date?: string;
       search_results?: number[];
       search_query?: string;
       title?: string;
@@ -203,6 +223,15 @@ export default function Home() {
         }
         if (command.filter_priority) {
           setPriorityFilter(command.filter_priority);
+        }
+        if (command.filter_missed) {
+          setMissedFilter(command.filter_missed);
+        }
+        if (command.filter_start_date) {
+          setStartDateFilter(command.filter_start_date);
+        }
+        if (command.filter_end_date) {
+          setEndDateFilter(command.filter_end_date);
         }
         
         // Handle search results mode
@@ -562,9 +591,17 @@ export default function Home() {
 
   const renderListView = () => {
     // Filter tasks if in search mode
-    const displayTasks = searchResultIds 
+    let displayTasks = searchResultIds 
       ? tasks.filter(task => searchResultIds.includes(task.id))
       : tasks;
+    
+    // Apply missed filter (client-side, since API doesn't support it)
+    if (missedFilter !== 'all' && !searchResultIds) {
+      displayTasks = displayTasks.filter(task => {
+        const missed = isTaskMissed(task);
+        return missedFilter === 'missed' ? missed : !missed;
+      });
+    }
     
     return (
       <div className="flex-1 overflow-auto p-6">
@@ -651,6 +688,63 @@ export default function Home() {
               <option value="medium">Medium</option>
               <option value="low">Low</option>
             </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Missed:
+            </label>
+            <select
+              value={missedFilter}
+              onChange={(e) => setMissedFilter(e.target.value)}
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            >
+              <option value="all">All</option>
+              <option value="missed">Missed</option>
+              <option value="not_missed">Not Missed</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Start Date:
+            </label>
+            <input
+              type="date"
+              value={startDateFilter}
+              onChange={(e) => setStartDateFilter(e.target.value)}
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            />
+            {startDateFilter && (
+              <button
+                onClick={() => setStartDateFilter('')}
+                className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                title="Clear start date filter"
+              >
+                ×
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              End Date:
+            </label>
+            <input
+              type="date"
+              value={endDateFilter}
+              onChange={(e) => setEndDateFilter(e.target.value)}
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            />
+            {endDateFilter && (
+              <button
+                onClick={() => setEndDateFilter('')}
+                className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                title="Clear end date filter"
+              >
+                ×
+              </button>
+            )}
           </div>
         </div>
 
@@ -789,6 +883,17 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-3">
+          <Link
+            href="/settings"
+            className="rounded-lg border border-zinc-200 p-2 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            title="Settings"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </Link>
+          
           <div className="flex gap-1 rounded-lg border border-zinc-200 p-1 dark:border-zinc-800">
             <button
               type="button"

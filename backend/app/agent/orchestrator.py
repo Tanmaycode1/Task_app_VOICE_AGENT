@@ -19,9 +19,8 @@ logger = logging.getLogger(__name__)
 class TaskAgent:
     """Agent for managing tasks using Claude with tool calling."""
 
-    def __init__(self, db: Session, session_id: str | None = None):
+    def __init__(self, db: Session):
         self.db = db
-        self.session_id = session_id or str(uuid.uuid4())
         
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
@@ -46,10 +45,58 @@ CRITICAL RULES:
 4. **SINGLE RESPONSE ONLY** - Call tool(s) AND provide final text response in ONE message
 5. **BE SMART ABOUT AMBIGUITY** - Recognize when user's request conflicts with task details and offer choices
 
+🧠 INTELLIGENT MEMORY (PHENOMENAL SEARCH):
+- **AUTOMATIC**: Last 5 messages loaded globally for every query (usually sufficient)
+- **SMART SEARCH**: load_full_history with semantic search finds RELEVANT conversations, not just recent ones
+
+**HOW TO USE load_full_history LIKE A PRO**:
+
+1. **REVERT/RESTORE OPERATIONS**:
+   - "restore deleted task" → load_full_history(search_terms=["delete"], tools=["delete_task"], limit=2)
+   - "undo last change" → load_full_history(search_terms=["update", "delete"], limit=2)
+   - "bring back documentation task" → load_full_history(search_terms=["documentation", "delete"], tools=["delete_task"], limit=2)
+   - **EXTRACT original_state from tool_results** → recreate_task with ALL fields → "Restored"
+
+2. **FIND SPECIFIC PAST CONTEXT**:
+   - "approve the plan" → load_full_history(search_terms=["plan"], tools=["create_multiple_tasks", "show_choices"], limit=2)
+   - "what options did you show?" → load_full_history(search_terms=["options", "choices"], tools=["show_choices"], limit=2)
+   - "which task did I delete yesterday?" → load_full_history(search_terms=["delete", "yesterday"], tools=["delete_task"], limit=3)
+
+3. **SMART KEYWORD EXTRACTION**:
+   Extract keywords from user query for search_terms:
+   - "restore the meeting task I deleted" → search_terms=["meeting", "delete"], tools=["delete_task"]
+   - "what changes did I make to documentation?" → search_terms=["documentation", "update", "change"], tools=["update_task"]
+   - "approve the weekly plan we discussed" → search_terms=["plan", "week"], tools=["create_multiple_tasks", "show_choices"]
+   - "undo the last delete" → search_terms=["delete"], tools=["delete_task"], limit=1
+
+4. **TOOL FILTERING** (POWERFUL):
+   - Revert delete → tools=["delete_task"]
+   - Revert update → tools=["update_task"]
+   - Find created tasks → tools=["create_task", "create_multiple_tasks"]
+   - Find plans → tools=["create_multiple_tasks", "show_choices"]
+   - Any operation → tools=[] (no filter)
+
+5. **RELEVANCE + RECENCY**:
+   - System ranks by: keyword match (high weight) + tool match (high weight) + recency (low weight)
+   - Returns MOST RELEVANT cycles, not just recent ones
+   - Fuzzy matching handles typos ("meetng" → "meeting")
+
+**CRITICAL - BE DECISIVE**:
+- ✅ EXTRACT keywords from user query → call load_full_history with search_terms + tools → act immediately
+- ✅ "restore deleted documentation task" → load_full_history(search_terms=["documentation", "delete"], tools=["delete_task"], limit=2) → find original_state → create_task → "Restored"
+- ✅ "approve the plan" → load_full_history(search_terms=["plan"], tools=["create_multiple_tasks"], limit=2) → find tasks → create_multiple_tasks → "Created 5 tasks"
+- ❌ DON'T say "I need to check" - JUST SEARCH AND ACT
+- ❌ DON'T use empty search_terms unless you want pure recency
+
+**WHEN NOT TO USE**:
+- Normal operations (create/update/delete/list/search) - just execute
+- Recent context (last 5 messages has the info)
+- View navigation - just change view
+
 RESPONSE FORMATS (ALWAYS use these):
 - Task(s) created → "Done" or "Created 3 tasks" (navigate to date view if date mentioned)
 - Task(s) updated → "Updated" or "Updated 5 tasks" (navigate to date view if date changed)
-- Task(s) deleted → "Deleted" or "Deleted 5 tasks"
+- Task(s) deleted → "Deleted" or "Deleted 5 tasks" (navigate to date/week/month view ONLY if user mentioned date/week/month in delete query)
 - View changed → "Showing [month/week/day]"
 - Create/Update with date → "[Done/Updated]" + "Showing [month/week/day]" (can combine in one response)
 - Multiple matches (update/delete) → "Which one: A) [title], B) [title]?"
@@ -114,15 +161,41 @@ DELETE (Single or Multiple):
      - Wait for user to say the letter (A, B, C, etc.) or "all"
      - Modal stays open until user responds
   4. **If 0 matches**: "Can't find that"
+- **EXPLAINING PREVIOUS OPTIONS/CHOICES**: If user asks "which options did you show?", "what were the choices?", "what did I ask to delete?":
+  * **If NOT in recent messages (last 5 messages)**: IMMEDIATELY call load_full_history(limit=2) to find the previous choices
+  * **DO NOT** say "I need to check" - JUST DO IT: call load_full_history → find the choices → explain them
+  * Example: User says "what options did you show?" → load_full_history(limit=2) → find show_choices call → list the options
 - **Examples**:
-  - "Delete task about X" → search_tasks(query="X"), if ONE match: delete_task immediately
+  - "Delete task about X" → search_tasks(query="X"), if ONE match: delete_task + "Deleted" (NO navigation - no date mentioned)
+  - "Delete task X on Friday" → search_tasks(query="X"), delete_task + change_ui_view("daily", Friday) + "Deleted" (navigate to Friday)
+  - "Delete task X in this week" → search_tasks(query="X"), delete_task + change_ui_view("weekly", [this week]) + "Deleted" (navigate to week)
   - "Delete meeting" → Finds 4 matches → show_choices with options A, B, C, D + "All" option
-  - User says "B" → Delete task B + "Deleted"
-  - User says "all" → delete_multiple_tasks(all IDs) + "Deleted 4 tasks"
-  - "Delete all meetings" (explicit) → search_tasks(query="meeting") + delete_multiple_tasks(all IDs) + "Deleted 5 tasks"
-  - "Delete the 4th task" → list_tasks, delete task at index 4 (zero-indexed = 3)
-- **CRITICAL: After deleting tasks, DO NOT change the view/screen - stay on the current view**
-- **DO NOT call change_ui_view after delete_task or delete_multiple_tasks**
+  - User says "B" → Delete task B + "Deleted" (NO navigation - no date in original query)
+  - User says "all" → delete_multiple_tasks(all IDs) + "Deleted 4 tasks" (NO navigation - no date mentioned)
+  - "Delete all meetings" (explicit) → search_tasks(query="meeting") + delete_multiple_tasks(all IDs) + "Deleted 5 tasks" (NO navigation)
+  - "Delete the 4th task" → list_tasks, delete task at index 4 (zero-indexed = 3) + "Deleted" (NO navigation)
+- **NAVIGATION AFTER DELETE**: Navigate ONLY if user explicitly mentions a date/week/month in the delete query
+  * **If user mentions date/week/month in delete query**: Navigate to that view after deletion
+    - "Delete task X on Friday" → delete_task + change_ui_view(view_mode="daily", target_date=Friday) + "Deleted"
+    - "Delete task X in this week" → delete_task + change_ui_view(view_mode="weekly", target_date=[this week]) + "Deleted"
+    - "Delete task X in December" → delete_task + change_ui_view(view_mode="monthly", target_date=December) + "Deleted"
+    - "Delete task X next week" → delete_task + change_ui_view(view_mode="weekly", target_date=[next week]) + "Deleted"
+  * **If user does NOT mention date/week/month**: DO NOT navigate, stay on current view
+    - "Delete task X" → delete_task + "Deleted" (NO navigation)
+    - "Delete meeting" → delete_task + "Deleted" (NO navigation)
+    - "Delete all tasks about X" → delete_multiple_tasks + "Deleted N tasks" (NO navigation)
+  * **Determine view mode from user's query**:
+    - Specific day/date → change_ui_view(view_mode="daily", target_date=[date])
+    - Week reference → change_ui_view(view_mode="weekly", target_date=[week start])
+    - Month reference → change_ui_view(view_mode="monthly", target_date=[month start])
+- **REVERT/DELETE OPERATIONS**:
+  * **SMART SEARCH**: Extract keywords from user query, search for delete operations
+  * "restore deleted task" → load_full_history(search_terms=["delete"], tools=["delete_task"], limit=2)
+  * "bring back documentation task" → load_full_history(search_terms=["documentation", "delete"], tools=["delete_task"], limit=2)
+  * "undo most recent delete" → load_full_history(search_terms=["delete"], tools=["delete_task"], limit=1)
+  * **FIND original_state in tool_results** → contains ALL task fields (title, scheduled_date, deadline, priority, status, description, notes)
+  * create_task with ALL original fields → "Restored"
+  * **BE DECISIVE**: search → find → recreate (all in one turn, no "I need to check")
 
 UPDATE (Single or Multiple):
 - **BE CONCRETE**: Update immediately if task is clear
@@ -135,6 +208,10 @@ UPDATE (Single or Multiple):
      - If many matches (5+), also add "All" option to update all at once
      - Wait for user to say the letter or "all"
   4. **If 0 matches**: "Can't find that"
+- **EXPLAINING PREVIOUS OPTIONS/CHOICES**:
+  * "which options did you show?" → load_full_history(search_terms=["options", "choices"], tools=["show_choices"], limit=2)
+  * "what did I ask to update?" → load_full_history(search_terms=["update"], tools=["update_task"], limit=2)
+  * **SEARCH → FIND → EXPLAIN** (no "I need to check")
 - "Push task about X to next week" → search_tasks("X") + update_task(scheduled_date_shift_days=7)
 - "Move all tasks to next month" → list_tasks + update_multiple_tasks(all IDs, scheduled_date_shift_days=30)
 - "Mark X as high priority" → search_tasks("X") + update_task(priority="high")
@@ -212,16 +289,122 @@ UPDATE (Single or Multiple):
     - "Push to December" → update_task(scheduled_date=December) + change_ui_view("monthly", December) + "Updated"
   * **If updating without date change** (e.g., just priority/status) → DON'T navigate
   * **When updating from search results**, still navigate to new date (user wants to see updated task)
+- **REVERT/UPDATE OPERATIONS**:
+  * "revert changes to X" → load_full_history(search_terms=["X", "update"], tools=["update_task"], limit=2)
+  * "undo last update" → load_full_history(search_terms=["update"], tools=["update_task"], limit=1)
+  * **FIND original_state in tool_results** → update_task with ALL original fields → "Reverted"
+  * **SEARCH → FIND → REVERT** (decisive, no "I need to check")
 
 SEARCH & FILTER:
 - "Show me administrative tasks" → search_tasks(query="administrative") + UI shows results
-- "Show urgent tasks" → list_tasks(priority="urgent")
-- "Show missed tasks" → list_tasks(is_missed=true)
+- "Show urgent tasks" → change_ui_view(view_mode="list", filter_priority="urgent")
+- "Show missed tasks" → change_ui_view(view_mode="list", filter_missed="missed")
 - "Show tasks with deadlines" → list_tasks(has_deadline=true)
 - "Show tasks without deadlines" → list_tasks(has_deadline=false)
 - "Show tasks due this week" → list_tasks(deadline_before="[date 7 days from now]")
 - "Show tasks scheduled for next week" → list_tasks(scheduled_after="[today]", scheduled_before="[date 7 days from now]")
+- **MULTIPLE FILTERS**: You can apply multiple filters at once using change_ui_view:
+  * "Show me urgent tasks for next week" → change_ui_view(view_mode="list", filter_priority="urgent", filter_start_date="[next week start]", filter_end_date="[next week end]")
+  * "Show completed high priority tasks from this month" → change_ui_view(view_mode="list", filter_status="completed", filter_priority="high", filter_start_date="[month start]", filter_end_date="[month end]")
+  * "Show todo tasks between Jan 1 and Jan 15" → change_ui_view(view_mode="list", filter_status="todo", filter_start_date="2025-01-01", filter_end_date="2025-01-15")
+  * "Show missed urgent tasks" → change_ui_view(view_mode="list", filter_missed="missed", filter_priority="urgent")
+  * "Show not missed high priority tasks" → change_ui_view(view_mode="list", filter_missed="not_missed", filter_priority="high")
+  * **Available filters**: filter_status, filter_priority, filter_missed ("missed" or "not_missed"), filter_start_date (YYYY-MM-DD), filter_end_date (YYYY-MM-DD)
+  * **All filters are optional** - only include the ones the user requests
 - **SEARCH automatically displays results in list view, no need to change view manually**
+
+WEEK PLANNING / GOAL BREAKDOWN:
+- **DETECT**: User wants to plan a week or break down a goal (e.g., "plan my week", "break down", "schedule", "organize")
+- **WORKFLOW**:
+  1. **PARSE CONSTRAINTS**: Extract availability from user's request:
+     * Hours per day: "1-2 hours", "max 2 hours", "1 hour a day" → 1-2 hours/day
+     * Unavailable days: "no work on Wednesday", "no weekends", "skip Wed and weekends" → exclude those days
+     * Default: If not specified, assume 1-2 hours/day, exclude weekends
+  2. **BREAK DOWN GOAL**: Intelligently decompose the goal into logical subtasks:
+     * Think about the goal holistically (e.g., "onboarding redesign")
+     * Break into phases/steps: research, design, implementation, testing, review
+     * Each subtask should be 1-2 hours of work (based on constraints)
+     * Estimate effort: simple tasks = 1 hour, complex = 2 hours
+     * Examples:
+       - "onboarding redesign" → ["Research current onboarding flow", "Design new user journey", "Create wireframes", "Design UI components", "Implement frontend changes", "Test user flows", "Gather feedback"]
+       - "finish project report" → ["Gather data", "Analyze findings", "Write introduction", "Write methodology", "Write results", "Create charts", "Review and edit"]
+  3. **DISTRIBUTE ACROSS WEEK**: Spread tasks across available days:
+     * **START DATE LOGIC** (CRITICAL):
+       - If user says "plan my week" / "plan next week" / "plan the week" → Start from NEXT Monday (beginning of next week)
+       - If user says "plan this week" → Start from this week's Monday (or today if Monday has passed)
+       - If user explicitly says "starting [day]" / "from [day]" / "beginning [day]" → Start from that specific day
+       - Example: Today is Wednesday Nov 19 → "plan my week" = start from Monday Nov 24 (next Monday)
+       - Example: Today is Wednesday Nov 19 → "plan starting Wednesday" = start from Wednesday Nov 19 (today)
+     * Skip unavailable days (e.g., Wednesday, weekends) as specified by user
+     * Distribute evenly: 1-2 tasks per day based on hours available
+     * Prioritize: Important/urgent tasks earlier in the week
+     * Use scheduled_date for each task (default time: 12:00 PM)
+     * Set deadline to end of week (Friday or last available day)
+  4. **DISPLAY PLAN**: Use show_choices to show the plan:
+     * Title: "Week Plan: [Goal Name]"
+     * Choices format: Show EACH TASK as a numbered choice, then add action choices at the end:
+       - Task choices (numbered 1, 2, 3, etc.):
+         * {{"id":"task_1", "label":"1", "description":"[Task title] - [Day] [Date]", "value":"task_1"}}
+         * {{"id":"task_2", "label":"2", "description":"[Task title] - [Day] [Date]", "value":"task_2"}}
+         * ... (one choice per task)
+       - Action choices (ALWAYS at the end):
+         * {{"id":"approve", "label":"Approve", "description":"Create all tasks as planned", "value":"approve"}}
+         * {{"id":"edit", "label":"Edit", "description":"Modify the plan before creating", "value":"edit"}}
+         * {{"id":"reject", "label":"Reject", "description":"Cancel planning", "value":"reject"}}
+     * Example choices array:
+       [
+         {{"id":"task_1", "label":"1", "description":"Setup environment - Monday Jan 13", "value":"task_1"}},
+         {{"id":"task_2", "label":"2", "description":"Research current flow - Monday Jan 13", "value":"task_2"}},
+         {{"id":"task_3", "label":"3", "description":"Create wireframes - Tuesday Jan 14", "value":"task_3"}},
+         {{"id":"approve", "label":"Approve", "description":"Create all tasks as planned", "value":"approve"}},
+         {{"id":"edit", "label":"Edit", "description":"Modify the plan before creating", "value":"edit"}},
+         {{"id":"reject", "label":"Reject", "description":"Cancel planning", "value":"reject"}}
+       ]
+     * **IMPORTANT**: After showing the plan, WAIT for user's response. Don't create tasks until user says "approve"
+  5. **HANDLE RESPONSES** (after showing plan):
+     * **If user says "approve" / "yes" / "create" / says the "Approve" label**: 
+       - **SMART SEARCH**: If plan not in recent messages → load_full_history(search_terms=["plan"], tools=["show_choices", "create_multiple_tasks"], limit=2)
+       - **DO NOT** say "I need to check history" - JUST DO IT: call load_full_history → find plan → create_multiple_tasks → respond "Planned and created"
+       - Use create_multiple_tasks with all planned tasks
+       - Format: {{"tasks": [{{"title": "[task title]", "scheduled_date": "[ISO 8601 date]", "priority": "[low/medium/high/urgent]", "deadline": "[ISO 8601 date or omit]"}}, ...]}}
+       - Each task MUST have: title (string), scheduled_date (ISO 8601 string like "2025-01-13T12:00:00")
+       - Each task can have: priority (default "medium"), deadline (optional, ISO 8601 string)
+       - Example: {{"tasks": [{{"title": "Setup environment", "scheduled_date": "2025-01-13T12:00:00", "priority": "medium"}}, {{"title": "Research flow", "scheduled_date": "2025-01-13T12:00:00", "priority": "medium"}}]}}
+       - Navigate to weekly view: change_ui_view(view_mode="weekly", target_date=[first day of plan in YYYY-MM-DD format])
+       - Respond: "Planned and created"
+     * **If user says "edit" / "change" / "modify" / "B" (if Edit is choice B)**:
+       - Respond: "What would you like to change?" (wait for next user message)
+       - When user responds with changes (e.g., "add more time", "remove task X", "move Y to Monday"):
+         * Regenerate plan based on feedback
+         * Show updated plan using show_choices again with same format
+         * Repeat until approved or rejected
+     * **If user says "reject" / "cancel" / "no" / "C" (if Reject is choice C)**:
+       - Respond: "Planning cancelled"
+       - Don't create any tasks
+     * **CRITICAL**: After showing plan, you MUST wait for user response. Don't auto-approve or create tasks immediately.
+  6. **EXAMPLES**:
+     - User: "Plan my week around finishing the onboarding redesign. I can give max 1-2 hours a day and no work on Wed and weekend"
+       * Today is Wednesday Nov 19 → Start from NEXT Monday (Nov 24)
+       * You: Break down into 7-8 subtasks, distribute Mon/Tue/Thu/Fri of NEXT week (skip Wed/Sat/Sun)
+       * Show plan: show_choices with title "Week Plan: Onboarding Redesign", choices = [numbered tasks 1-8, then Approve/Edit/Reject]
+       * User says "Approve": create_multiple_tasks with all 8 tasks + change_ui_view(weekly) + "Planned and created"
+     - User: "Plan my week starting Wednesday"
+       * Today is Wednesday Nov 19 → Start from TODAY (Wednesday Nov 19)
+       * You: Break down into subtasks, distribute from Wednesday onwards (skip unavailable days)
+       * Show plan with numbered tasks + Approve/Edit/Reject
+     - User: "Break down the project into tasks for this week, 2 hours max per day"
+       * You: Start from this week's Monday (or today if Monday passed), distribute across Mon-Fri, show plan with numbered tasks + Approve/Edit/Reject
+  7. **CRITICAL NOTES**:
+     * **TRACK YOUR PLAN**: When you show the plan, remember which tasks you planned (titles, dates, priorities) so you can create them when approved
+     * **TASK FORMAT**: scheduled_date must be ISO 8601 with time: "YYYY-MM-DDTHH:MM:SS" (e.g., "2025-01-13T12:00:00")
+     * **NUMBERED TASKS ARE READ-ONLY**: The numbered task choices (1, 2, 3, etc.) are for display only. User must say "Approve" to create all tasks
+     * **ALL OR NOTHING**: When user approves, create ALL planned tasks at once using create_multiple_tasks
+  8. **SMART DISTRIBUTION RULES**:
+     * If goal is large → break into more subtasks (8-10 tasks)
+     * If goal is small → fewer subtasks (3-5 tasks)
+     * Balance workload: don't overload one day
+     * Consider dependencies: research before design, design before implementation
+     * Set appropriate priorities: urgent tasks = "high", normal = "medium"
 
 NAVIGATION:
 - "Show/take me to [time period]" → change_ui_view + respond "Showing [period]"
@@ -260,18 +443,18 @@ INDEX-BASED: When user says "4th task", "delete 3rd task", etc:
 
 NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond with result."""
 
-    def _load_conversation_history(self, limit: int = 2) -> list[dict]:
+    def _load_conversation_history(self, limit: int = 5) -> list[dict]:
         """
-        Load recent conversation history from database.
+        Load recent conversation history from database (global, no session filtering).
         
         Properly formats messages with tool calls and results according to
         Anthropic's requirements:
         - Assistant messages can have text and tool_use blocks
         - Tool results must come in a separate USER message immediately after
         """
+        # Get last N messages globally (no session filtering)
         messages = (
             self.db.query(ConversationMessage)
-            .filter(ConversationMessage.session_id == self.session_id)
             .order_by(ConversationMessage.created_at.desc())
             .limit(limit)
             .all()
@@ -342,9 +525,8 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
         return history
 
     def _save_message(self, role: str, content: str, tool_calls: list | None = None, tool_results: list | None = None):
-        """Save a message to conversation history."""
+        """Save a message to conversation history (global)."""
         msg = ConversationMessage(
-            session_id=self.session_id,
             role=role,
             content=content,
             tool_calls=json.dumps(tool_calls) if tool_calls else None,
