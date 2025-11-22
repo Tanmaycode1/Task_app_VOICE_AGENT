@@ -239,17 +239,17 @@ export default function SettingsPage() {
 
         {activeTab === 'conversation' && (
           <>
-            <div className="mb-6 flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
-                  Conversation History
-                </h2>
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  {pagination 
-                    ? `Showing ${((page - 1) * pagination.limit) + 1}-${Math.min(page * pagination.limit, pagination.total)} of ${pagination.total} messages (Page ${page} of ${pagination.total_pages})`
-                    : 'All conversations sorted chronologically (oldest → newest)'}
-                </p>
-              </div>
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+              Conversation History
+            </h2>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              {pagination 
+                ? `Showing ${((page - 1) * pagination.limit) + 1}-${Math.min(page * pagination.limit, pagination.total)} of ${pagination.total} messages (Page ${page} of ${pagination.total_pages})`
+                : 'All conversations sorted chronologically (oldest → newest)'}
+            </p>
+          </div>
 
           <div className="flex items-center gap-3">
             <button
