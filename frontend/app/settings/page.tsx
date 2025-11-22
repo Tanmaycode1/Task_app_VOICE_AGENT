@@ -3,6 +3,9 @@
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 
+// API base URL from environment variable
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000/api';
+
 type ConversationMessage = {
   id: number;
   role: string;
@@ -21,12 +24,43 @@ type PaginationInfo = {
   has_previous: boolean;
 };
 
+type ApiCost = {
+  id: number;
+  user_query: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  input_cost: number;
+  output_cost: number;
+  total_cost: number;
+  iterations: number;
+  tool_calls_count: number;
+  created_at: string;
+};
+
+type CostSummary = {
+  total_cost: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_requests: number;
+  average_cost_per_request: number;
+};
+
 export default function SettingsPage() {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState<PaginationInfo | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Cost tracking state
+  const [costs, setCosts] = useState<ApiCost[]>([]);
+  const [costLoading, setCostLoading] = useState(true);
+  const [costPage, setCostPage] = useState(1);
+  const [costPagination, setCostPagination] = useState<PaginationInfo | null>(null);
+  const [costSummary, setCostSummary] = useState<CostSummary | null>(null);
+  const [activeTab, setActiveTab] = useState<'conversation' | 'costs'>('conversation');
 
   const loadHistory = async (pageNum: number = page) => {
     setLoading(true);
@@ -35,7 +69,7 @@ export default function SettingsPage() {
       params.append('page', pageNum.toString());
       params.append('limit', '50');
 
-      const response = await fetch(`http://localhost:8000/api/conversation/history?${params}`);
+      const response = await fetch(`${API_BASE}/conversation/history?${params}`);
       const data = await response.json();
       
       if (data.success) {
@@ -75,7 +109,7 @@ export default function SettingsPage() {
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/api/conversation/history`, {
+      const response = await fetch(`${API_BASE}/conversation/history`, {
         method: 'DELETE',
       });
       const data = await response.json();
@@ -90,8 +124,46 @@ export default function SettingsPage() {
     }
   };
 
+  const loadCostHistory = async (pageNum: number = costPage) => {
+    setCostLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('page', pageNum.toString());
+      params.append('limit', '50');
+
+      const response = await fetch(`${API_BASE}/costs/history?${params}`);
+      const data = await response.json();
+      
+      if (data.success) {
+        setCosts(data.costs);
+        setCostSummary(data.summary);
+        setCostPagination({
+          total: data.total,
+          page: data.page,
+          limit: data.limit,
+          total_pages: data.total_pages,
+          has_next: data.has_next,
+          has_previous: data.has_previous,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load cost history:', error);
+    } finally {
+      setCostLoading(false);
+    }
+  };
+
+  const handleCostPageChange = (newPage: number) => {
+    if (newPage >= 1 && costPagination && newPage <= costPagination.total_pages) {
+      setCostPage(newPage);
+      loadCostHistory(newPage);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   useEffect(() => {
     loadHistory(1);
+    loadCostHistory(1);
   }, []);
 
   // Auto-scroll to bottom (newest messages) when on last page
@@ -141,17 +213,43 @@ export default function SettingsPage() {
 
       {/* Content */}
       <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
-              Conversation History
-            </h2>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              {pagination 
-                ? `Showing ${((page - 1) * pagination.limit) + 1}-${Math.min(page * pagination.limit, pagination.total)} of ${pagination.total} messages (Page ${page} of ${pagination.total_pages})`
-                : 'All conversations sorted chronologically (oldest → newest)'}
-            </p>
-          </div>
+        {/* Tabs */}
+        <div className="mb-6 flex gap-2 border-b border-zinc-200 dark:border-zinc-800">
+          <button
+            onClick={() => setActiveTab('conversation')}
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === 'conversation'
+                ? 'border-b-2 border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+            }`}
+          >
+            Conversation History
+          </button>
+          <button
+            onClick={() => setActiveTab('costs')}
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === 'costs'
+                ? 'border-b-2 border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+            }`}
+          >
+            Cost History
+          </button>
+        </div>
+
+        {activeTab === 'conversation' && (
+          <>
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+                  Conversation History
+                </h2>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {pagination 
+                    ? `Showing ${((page - 1) * pagination.limit) + 1}-${Math.min(page * pagination.limit, pagination.total)} of ${pagination.total} messages (Page ${page} of ${pagination.total_pages})`
+                    : 'All conversations sorted chronologically (oldest → newest)'}
+                </p>
+              </div>
 
           <div className="flex items-center gap-3">
             <button
@@ -302,6 +400,176 @@ export default function SettingsPage() {
               Next
             </button>
           </div>
+        )}
+          </>
+        )}
+
+        {activeTab === 'costs' && (
+          <>
+            {/* Cost Summary */}
+            {costSummary && (
+              <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+                <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">Total Cost</p>
+                  <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+                    ${costSummary.total_cost.toFixed(4)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">Total Requests</p>
+                  <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+                    {costSummary.total_requests.toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">Avg per Request</p>
+                  <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+                    ${costSummary.average_cost_per_request.toFixed(6)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">Total Tokens</p>
+                  <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+                    {(costSummary.total_input_tokens + costSummary.total_output_tokens).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+                  API Cost History
+                </h2>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {costPagination 
+                    ? `Showing ${((costPage - 1) * costPagination.limit) + 1}-${Math.min(costPage * costPagination.limit, costPagination.total)} of ${costPagination.total} requests (Page ${costPage} of ${costPagination.total_pages})`
+                    : 'All API costs sorted by most recent'}
+                </p>
+              </div>
+            </div>
+
+            {costLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <p className="text-zinc-500 dark:text-zinc-400">Loading...</p>
+              </div>
+            ) : costs.length === 0 ? (
+              <div className="flex items-center justify-center py-12">
+                <p className="text-zinc-500 dark:text-zinc-400">No cost history yet</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {costs.map((cost) => (
+                  <div
+                    key={cost.id}
+                    className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
+                  >
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-purple-600 px-3 py-1 text-xs font-medium text-white">
+                          {cost.model}
+                        </span>
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                          {new Date(cost.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
+                          ${cost.total_cost.toFixed(6)}
+                        </p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                          {cost.iterations} iteration{cost.iterations !== 1 ? 's' : ''} • {cost.tool_calls_count} tool{cost.tool_calls_count !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mb-2">
+                      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        Query:
+                      </p>
+                      <p className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">
+                        {cost.user_query || '(No query)'}
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <p className="text-zinc-500 dark:text-zinc-400">Input Tokens</p>
+                        <p className="font-medium text-zinc-900 dark:text-zinc-100">
+                          {cost.input_tokens.toLocaleString()} (${cost.input_cost.toFixed(6)})
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-zinc-500 dark:text-zinc-400">Output Tokens</p>
+                        <p className="font-medium text-zinc-900 dark:text-zinc-100">
+                          {cost.output_tokens.toLocaleString()} (${cost.output_cost.toFixed(6)})
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Cost Pagination */}
+            {costPagination && costPagination.total_pages > 1 && (
+              <div className="mt-8 flex items-center justify-center gap-4">
+                <button
+                  onClick={() => handleCostPageChange(costPage - 1)}
+                  disabled={!costPagination.has_previous || costLoading}
+                  className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                    costPagination.has_previous && !costLoading
+                      ? 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                      : 'border-zinc-200 bg-zinc-100 text-zinc-400 cursor-not-allowed dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-600'
+                  }`}
+                >
+                  Previous
+                </button>
+
+                <div className="flex items-center gap-2">
+                  {Array.from({ length: Math.min(5, costPagination.total_pages) }, (_, i) => {
+                    let pageNum: number;
+                    if (costPagination.total_pages <= 5) {
+                      pageNum = i + 1;
+                    } else if (costPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (costPage >= costPagination.total_pages - 2) {
+                      pageNum = costPagination.total_pages - 4 + i;
+                    } else {
+                      pageNum = costPage - 2 + i;
+                    }
+
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => handleCostPageChange(pageNum)}
+                        disabled={costLoading}
+                        className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                          pageNum === costPage
+                            ? 'border-blue-500 bg-blue-600 text-white dark:border-blue-400 dark:bg-blue-500'
+                            : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                        } ${costLoading ? 'cursor-not-allowed opacity-50' : ''}`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => handleCostPageChange(costPage + 1)}
+                  disabled={!costPagination.has_next || costLoading}
+                  className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                    costPagination.has_next && !costLoading
+                      ? 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                      : 'border-zinc-200 bg-zinc-100 text-zinc-400 cursor-not-allowed dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-600'
+                  }`}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>

@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 import logging
+import sys
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,10 +10,24 @@ from app.api.router import api_router
 from app.core.settings import get_settings
 from app.db.init_db import init_db
 
-# Configure logging - suppress SQLAlchemy engine logs
+# Configure root logging to show all application logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s:     %(name)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+# Configure logging levels for different modules
 logging.getLogger("sqlalchemy.engine").setLevel(logging.ERROR)
 logging.getLogger("sqlalchemy.pool").setLevel(logging.ERROR)
 logging.getLogger("sqlalchemy.dialects").setLevel(logging.ERROR)
+
+# Enable agent and tool logging
+logging.getLogger("app.agent.orchestrator").setLevel(logging.INFO)
+logging.getLogger("app.agent.tools").setLevel(logging.INFO)
+logging.getLogger("app.api.routes.agent").setLevel(logging.INFO)
 
 
 def create_application() -> FastAPI:

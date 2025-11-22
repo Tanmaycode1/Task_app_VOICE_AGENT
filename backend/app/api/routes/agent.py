@@ -116,7 +116,9 @@ async def agent_websocket(websocket: WebSocket, db: Session = Depends(get_db)):
                             query = current_transcript
                             current_transcript = ""
                             
-                            logger.info(f"🎤 Processing: {query}")
+                            logger.info("=" * 80)
+                            logger.info(f"🎤 NEW QUERY RECEIVED: '{query}'")
+                            logger.info("=" * 80)
                             
                             # Signal start
                             await websocket.send_text(json.dumps({
@@ -244,6 +246,10 @@ async def agent_query(query: dict[str, str], db: Session = Depends(get_db)):
     user_query = query.get("query", "")
     if not user_query:
         return {"error": "Query is required"}
+    
+    logger.info("=" * 80)
+    logger.info(f"🎤 HTTP QUERY RECEIVED: '{user_query}'")
+    logger.info("=" * 80)
     
     agent = TaskAgent(db)
     result = agent.process_query_sync(user_query)

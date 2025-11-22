@@ -1,7 +1,7 @@
 """Database initialization utilities."""
 
 from app.db.base import Base, engine
-from app.models import ConversationMessage, Task  # noqa: F401 - ensures models are registered
+from app.models import ApiCost, ConversationMessage, Task  # noqa: F401 - ensures models are registered
 
 
 def init_db() -> None:

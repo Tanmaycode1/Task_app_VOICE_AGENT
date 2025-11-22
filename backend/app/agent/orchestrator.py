@@ -11,9 +11,16 @@ import anthropic
 from sqlalchemy.orm import Session
 
 from app.agent.tools import TOOLS, execute_tool
+from app.models.api_cost import ApiCost
 from app.models.conversation import ConversationMessage
 
 logger = logging.getLogger(__name__)
+
+# Claude Sonnet 4.5 pricing (per million tokens)
+INPUT_TOKEN_COST_PER_MILLION = 3.0  # $3 per million input tokens
+CACHE_WRITE_COST_PER_MILLION = 3.75  # $3.75 per million tokens (25% more than base)
+CACHE_READ_COST_PER_MILLION = 0.30  # $0.30 per million tokens (10% of base)
+OUTPUT_TOKEN_COST_PER_MILLION = 15.0  # $15 per million output tokens
 
 
 class TaskAgent:
@@ -463,7 +470,7 @@ INDEX-BASED: When user says "4th task", "delete 3rd task", etc:
 
 NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond with result."""
 
-    def _load_conversation_history(self, limit: int = 5) -> list[dict]:
+    def _load_conversation_history(self, limit: int = 3) -> list[dict]:
         """
         Load recent conversation history from database (global, no session filtering).
         
@@ -555,6 +562,56 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
         self.db.add(msg)
         self.db.commit()
 
+    def _save_cost(
+        self,
+        user_query: str,
+        input_tokens: int,
+        output_tokens: int,
+        iterations: int,
+        tool_calls_count: int,
+    ):
+        """Save API cost tracking to database.
+        
+        This method saves the TOTAL costs across all iterations for a single request.
+        input_tokens and output_tokens should be the accumulated totals from all iterations.
+        """
+        try:
+            total_tokens = input_tokens + output_tokens
+            
+            # Calculate costs (per million tokens)
+            # These are the TOTAL costs across all iterations
+            input_cost = (input_tokens / 1_000_000) * INPUT_TOKEN_COST_PER_MILLION
+            output_cost = (output_tokens / 1_000_000) * OUTPUT_TOKEN_COST_PER_MILLION
+            total_cost = input_cost + output_cost
+            
+            # Truncate user query to 1000 chars for storage
+            query_preview = user_query[:1000] if len(user_query) > 1000 else user_query
+            
+            cost_record = ApiCost(
+                user_query=query_preview,
+                model=self.model,
+                input_tokens=input_tokens,  # Total across all iterations
+                output_tokens=output_tokens,  # Total across all iterations
+                total_tokens=total_tokens,  # Total across all iterations
+                input_cost=input_cost,  # Total cost for all input tokens
+                output_cost=output_cost,  # Total cost for all output tokens
+                total_cost=total_cost,  # Grand total cost
+                iterations=iterations,  # Number of API calls made
+                tool_calls_count=tool_calls_count,
+            )
+            self.db.add(cost_record)
+            self.db.commit()
+            
+            logger.info(
+                f"💰 Total cost saved: ${total_cost:.6f} "
+                f"({input_tokens} in, {output_tokens} out, {total_tokens} total tokens, "
+                f"{iterations} iterations, {tool_calls_count} tools) | "
+                f"Input: ${input_cost:.6f}, Output: ${output_cost:.6f}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to save cost tracking: {e}", exc_info=True)
+            # Don't fail the request if cost tracking fails
+
     async def process_query(
         self,
         user_query: str,
@@ -582,8 +639,9 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
         messages = conversation_history.copy() if conversation_history else []
         messages.append({"role": "user", "content": user_query})
         
-        # Debug: log message format
-        logger.info(f"Processing query with {len(messages)} messages in history")
+        # Log query processing start
+        logger.info(f"🎯 Processing query: '{user_query}'")
+        logger.info(f"📚 Loaded {len(messages)} messages in history")
         
         # Immediately yield a "thinking" event to show we're processing
         yield {
@@ -597,6 +655,10 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
         all_tool_calls = []
         all_tool_results = []
         
+        # Cost tracking
+        total_input_tokens = 0
+        total_output_tokens = 0
+        
         try:
             while iteration < max_iterations:
                 iteration += 1
@@ -605,13 +667,22 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                 iteration_text = ""  # Accumulate text for this iteration
                 iteration_tool_calls = []
                 
-                # Stream response from Claude
+                # Stream response from Claude with prompt caching
+                # System prompt and tools are cached - only pay for user query + history on repeated calls!
+                # Extended cache (1 hour) is shared across ALL users with same API key!
                 with self.client.messages.stream(
                     model=self.model,
-                    max_tokens=4096,  # Doubled for Sonnet 4.5 - supports longer responses and complex operations
-                    system=self.system_prompt,
-                    tools=TOOLS,
+                    max_tokens=1024,  # Enough for tool calls + responses (reduced from 4096)
+                    system=[
+                        {
+                            "type": "text",
+                            "text": self.system_prompt,
+                            "cache_control": {"type": "ephemeral"}  # Cache system prompt
+                        }
+                    ],
+                    tools=TOOLS,  # Tools are automatically cached with system prompt
                     messages=messages,
+                    extra_headers={"anthropic-beta": "extended-cache-ttl-2025-04-11"},  # 1 hour cache!
                 ) as stream:
                     # Track current tool use
                     current_tool_use = None
@@ -661,6 +732,9 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                                     # Use empty dict as fallback
                                     tool_input = {}
                                 
+                                # Log tool usage
+                                logger.info(f"🔧 Tool call: {current_tool_use['name']}({json.dumps(tool_input, indent=2)})")
+                                
                                 yield {
                                     "type": "tool_use",
                                     "tool": current_tool_use["name"],
@@ -680,6 +754,9 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                                         "success": False,
                                         "error": f"Tool execution failed: {str(e)}"
                                     }
+                                
+                                # Log tool result
+                                logger.info(f"✅ Tool result from {current_tool_use['name']}: {json.dumps(tool_result, indent=2)[:200]}...")
                                 
                                 yield {
                                     "type": "tool_result",
@@ -731,6 +808,56 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                     # Get final message
                     final_message = stream.get_final_message()
                     
+                    # Track token usage from this iteration (includes cache metrics)
+                    # Usage is available on the final message from stream
+                    # IMPORTANT: We accumulate BOTH input and output tokens across all iterations
+                    try:
+                        if hasattr(final_message, 'usage') and final_message.usage:
+                            usage = final_message.usage
+                            iteration_input = usage.input_tokens
+                            iteration_output = usage.output_tokens
+                            cache_creation_tokens = getattr(usage, 'cache_creation_input_tokens', 0)
+                            cache_read_tokens = getattr(usage, 'cache_read_input_tokens', 0)
+                            
+                            # Accumulate tokens across all iterations
+                            total_input_tokens += iteration_input
+                            total_output_tokens += iteration_output
+                            
+                            # Calculate cost for this iteration
+                            # Anthropic reports tokens separately:
+                            # - input_tokens: non-cached tokens ($3/M)
+                            # - cache_creation_input_tokens: tokens written to cache ($3.75/M - 25% premium)
+                            # - cache_read_input_tokens: cached tokens read ($0.30/M - 90% discount)
+                            regular_input_cost = (iteration_input / 1_000_000) * INPUT_TOKEN_COST_PER_MILLION
+                            cache_write_cost = (cache_creation_tokens / 1_000_000) * CACHE_WRITE_COST_PER_MILLION
+                            cache_read_cost = (cache_read_tokens / 1_000_000) * CACHE_READ_COST_PER_MILLION
+                            iteration_input_cost = regular_input_cost + cache_write_cost + cache_read_cost
+                            iteration_output_cost = (iteration_output / 1_000_000) * OUTPUT_TOKEN_COST_PER_MILLION
+                            iteration_total_cost = iteration_input_cost + iteration_output_cost
+                            
+                            # Calculate running total cost
+                            running_input_cost = (total_input_tokens / 1_000_000) * INPUT_TOKEN_COST_PER_MILLION
+                            running_output_cost = (total_output_tokens / 1_000_000) * OUTPUT_TOKEN_COST_PER_MILLION
+                            running_total_cost = running_input_cost + running_output_cost
+                            
+                            # Log per-iteration tokens and costs with cache info
+                            cache_info = ""
+                            if cache_creation_tokens > 0:
+                                cache_info = f" | 💾 Cache created: {cache_creation_tokens} tokens"
+                            if cache_read_tokens > 0:
+                                # Savings = what we would have paid ($3/M) - what we actually paid ($0.30/M)
+                                cache_savings = (cache_read_tokens / 1_000_000) * (INPUT_TOKEN_COST_PER_MILLION - CACHE_READ_COST_PER_MILLION)
+                                cache_info = f" | ⚡ Cache hit: {cache_read_tokens} tokens (saved ${cache_savings:.6f}!)"
+                            
+                            logger.info(
+                                f"📊 Iteration {iteration}: {iteration_input} in, {iteration_output} out | "
+                                f"Cost: ${iteration_total_cost:.6f} (${iteration_input_cost:.6f} in + ${iteration_output_cost:.6f} out){cache_info} | "
+                                f"Running total: {total_input_tokens} in, {total_output_tokens} out | "
+                                f"Total cost: ${running_total_cost:.6f}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Could not extract usage from response: {e}")
+                    
                     # Check if we need another iteration (more tools to use)
                     has_tool_use = any(
                         block.type == "tool_use"
@@ -745,7 +872,8 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                     if iteration_tool_calls and has_text:
                         # Efficient! Tool call(s) + response text in ONE iteration
                         assistant_response = iteration_text
-                        logger.info(f"⚡ Single-turn completion! Tool(s): {iteration_tool_calls} + Text: '{assistant_response}'")
+                        logger.info(f"⚡ Single-turn completion! Tool(s): {iteration_tool_calls}")
+                        logger.info(f"💬 Assistant response: '{assistant_response}'")
                         
                         # Stream the text now
                         for char in iteration_text:
@@ -772,6 +900,16 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                             )
                         
                         logger.info("📤 Sending 'done' event to frontend (single-turn)")
+                        
+                        # Save cost tracking
+                        self._save_cost(
+                            user_query=user_query,
+                            input_tokens=total_input_tokens,
+                            output_tokens=total_output_tokens,
+                            iterations=iteration,
+                            tool_calls_count=len(all_tool_calls),
+                        )
+                        
                         yield {"type": "done"}
                         return
                     
@@ -779,7 +917,8 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                         # No more tools, this is the FINAL iteration - stream the text
                         if has_text:
                             assistant_response = iteration_text
-                            logger.info(f"✅ Final iteration. Streaming text: '{assistant_response}' (length: {len(assistant_response)})")
+                            logger.info(f"✅ Final iteration complete")
+                            logger.info(f"💬 Assistant response: '{assistant_response}' (length: {len(assistant_response)})")
                             
                             # Stream text character by character
                             for char in iteration_text:
@@ -810,6 +949,16 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                         
                         # Always yield done before returning
                         logger.info("📤 Sending 'done' event to frontend")
+                        
+                        # Save cost tracking
+                        self._save_cost(
+                            user_query=user_query,
+                            input_tokens=total_input_tokens,
+                            output_tokens=total_output_tokens,
+                            iterations=iteration,
+                            tool_calls_count=len(all_tool_calls),
+                        )
+                        
                         yield {"type": "done"}
                         return  # Exit the generator
             
@@ -835,6 +984,16 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                     )
                 
                 logger.info("📤 Sending 'done' event to frontend (max iterations)")
+                
+                # Save cost tracking
+                self._save_cost(
+                    user_query=user_query,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    iterations=iteration,
+                    tool_calls_count=len(all_tool_calls),
+                )
+                
                 yield {"type": "done"}
                 return
                         
@@ -846,6 +1005,16 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                 "error": str(e),
             }
             # Always ensure done is sent even on error
+            # Save cost tracking even on error (if we have any tokens)
+            if total_input_tokens > 0 or total_output_tokens > 0:
+                self._save_cost(
+                    user_query=user_query,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    iterations=iteration,
+                    tool_calls_count=len(all_tool_calls),
+                )
+            
             yield {"type": "done"}
             return
 
@@ -858,16 +1027,74 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
         iteration = 0
         final_response = ""
         
+        # Cost tracking
+        total_input_tokens = 0
+        total_output_tokens = 0
+        all_tool_calls = []
+        
         while iteration < max_iterations:
             iteration += 1
             
+            # Use prompt caching for system prompt and tools
+            # Extended cache (1 hour) is shared across ALL users with same API key!
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=8192,  # Doubled for Sonnet 4.5 - supports longer responses
-                system=self.system_prompt,
-                tools=TOOLS,
+                max_tokens=1024,  # Enough for tool calls + responses (reduced from 8192)
+                system=[
+                    {
+                        "type": "text",
+                        "text": self.system_prompt,
+                        "cache_control": {"type": "ephemeral"}  # Cache system prompt
+                    }
+                ],
+                tools=TOOLS,  # Tools are automatically cached with system prompt
                 messages=messages,
+                extra_headers={"anthropic-beta": "extended-cache-ttl-2025-04-11"},  # 1 hour cache!
             )
+            
+            # Track token usage from this iteration (includes cache metrics)
+            if hasattr(response, 'usage') and response.usage:
+                usage = response.usage
+                iteration_input = usage.input_tokens
+                iteration_output = usage.output_tokens
+                cache_creation_tokens = getattr(usage, 'cache_creation_input_tokens', 0)
+                cache_read_tokens = getattr(usage, 'cache_read_input_tokens', 0)
+                
+                total_input_tokens += iteration_input
+                total_output_tokens += iteration_output
+                
+                # Calculate cost for this iteration
+                # Anthropic reports tokens separately:
+                # - input_tokens: non-cached tokens ($3/M)
+                # - cache_creation_input_tokens: tokens written to cache ($3.75/M - 25% premium)
+                # - cache_read_input_tokens: cached tokens read ($0.30/M - 90% discount)
+                regular_input_cost = (iteration_input / 1_000_000) * INPUT_TOKEN_COST_PER_MILLION
+                cache_write_cost = (cache_creation_tokens / 1_000_000) * CACHE_WRITE_COST_PER_MILLION
+                cache_read_cost = (cache_read_tokens / 1_000_000) * CACHE_READ_COST_PER_MILLION
+                iteration_input_cost = regular_input_cost + cache_write_cost + cache_read_cost
+                iteration_output_cost = (iteration_output / 1_000_000) * OUTPUT_TOKEN_COST_PER_MILLION
+                iteration_total_cost = iteration_input_cost + iteration_output_cost
+                
+                # Calculate running total cost
+                running_input_cost = (total_input_tokens / 1_000_000) * INPUT_TOKEN_COST_PER_MILLION
+                running_output_cost = (total_output_tokens / 1_000_000) * OUTPUT_TOKEN_COST_PER_MILLION
+                running_total_cost = running_input_cost + running_output_cost
+                
+                # Log per-iteration tokens and costs with cache info
+                cache_info = ""
+                if cache_creation_tokens > 0:
+                    cache_info = f" | 💾 Cache created: {cache_creation_tokens} tokens"
+                if cache_read_tokens > 0:
+                    # Savings = what we would have paid ($3/M) - what we actually paid ($0.30/M)
+                    cache_savings = (cache_read_tokens / 1_000_000) * (INPUT_TOKEN_COST_PER_MILLION - CACHE_READ_COST_PER_MILLION)
+                    cache_info = f" | ⚡ Cache hit: {cache_read_tokens} tokens (saved ${cache_savings:.6f}!)"
+                
+                logger.info(
+                    f"📊 Sync iteration {iteration}: {iteration_input} in, {iteration_output} out | "
+                    f"Cost: ${iteration_total_cost:.6f} (${iteration_input_cost:.6f} in + ${iteration_output_cost:.6f} out){cache_info} | "
+                    f"Running total: {total_input_tokens} in, {total_output_tokens} out | "
+                    f"Total cost: ${running_total_cost:.6f}"
+                )
             
             # Add assistant response to messages
             messages.append({"role": "assistant", "content": response.content})
@@ -881,6 +1108,7 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                     final_response += block.text
                 elif block.type == "tool_use":
                     has_tool_use = True
+                    all_tool_calls.append({"name": block.name, "input": block.input})
                     # Execute tool
                     tool_result = execute_tool(block.name, block.input, self.db)
                     tool_results.append({
@@ -895,6 +1123,15 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
             # Add tool results to messages
             if tool_results:
                 messages.append({"role": "user", "content": tool_results})
+        
+        # Save cost tracking
+        self._save_cost(
+            user_query=user_query,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            iterations=iteration,
+            tool_calls_count=len(all_tool_calls),
+        )
         
         return {
             "response": final_response,
