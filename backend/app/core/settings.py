@@ -22,6 +22,11 @@ class Settings:
     deepgram_api_key: str | None = os.getenv("DEEPGRAM_API_KEY")
     anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
     
+    # LLM Provider Configuration
+    use_groq: bool = os.getenv("USE_GROQ", "false").lower() == "true"
+    groq_api_key: str | None = os.getenv("GROQ_API_KEY")
+    groq_model: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    
     @property
     def database_path(self) -> str:
         """Return path to SQLite database file."""

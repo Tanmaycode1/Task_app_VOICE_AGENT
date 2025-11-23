@@ -44,10 +44,11 @@ Shram.ai is a next-generation task management application that lets you control 
 - Voice interruption support for natural conversations
 
 **🤖 Intelligent AI Agent**
-- Powered by Claude Sonnet 4.5 for reliable task operations
+- Powered by Claude Sonnet 4.5 or Groq (configurable)
 - Contextual understanding ("push that meeting to next week")
 - Automatic bulk operations (create/update/delete multiple tasks)
 - Conversation history for follow-up commands
+- Choose between quality (Claude) or speed (Groq)
 
 **🎨 Agentic GUI (AGUI)**
 - AI agent directly controls the user interface
@@ -263,10 +264,11 @@ With increased token limits (2048 tokens), the model can handle complex bulk ope
         │ REST APIs                          │ WebSocket
         │                                    │
         ▼                                    ▼
-┌──────────────────┐              ┌──────────────────┐
-│  Deepgram FLUX   │              │  Anthropic API   │
-│  (Speech-to-Text)│              │  (Claude LLM)    │
-└──────────────────┘              └──────────────────┘
+┌──────────────────┐              ┌──────────────────────────┐
+│  Deepgram FLUX   │              │  LLM Provider (choice)   │
+│  (Speech-to-Text)│              │  • Anthropic Claude 4.5  │
+└──────────────────┘              │  • Groq (Llama 3.3)      │
+                                  └──────────────────────────┘
 ```
 
 ### WebSocket Flow
@@ -316,6 +318,89 @@ The frontend's `handleUICommand` function receives these commands and updates Re
 
 ---
 
+## 🤖 LLM Provider Options
+
+Shram.ai supports two LLM providers. Choose based on your needs:
+
+### Option 1: Anthropic Claude Sonnet 4.5 (Default, Recommended)
+
+**Best for:** Production use, maximum quality, complex reasoning
+
+**Pros:**
+- ✅ Best-in-class reasoning and task understanding
+- ✅ Advanced tool calling (handles complex multi-tool scenarios perfectly)
+- ✅ Prompt caching (1-hour cache, saves ~90% on repeated calls)
+- ✅ Highly reliable and accurate
+- ✅ Detailed token usage tracking
+
+**Cons:**
+- ❌ Costs money ($3/M input, $15/M output)
+- ❌ Slightly slower than Groq (~30 tokens/sec)
+
+**Setup:**
+```bash
+# .env file
+USE_GROQ=false
+ANTHROPIC_API_KEY=your_anthropic_key_here
+```
+
+Get your API key: [https://console.anthropic.com/](https://console.anthropic.com/)
+
+---
+
+### Option 2: Groq (Free, Ultra-Fast)
+
+**Best for:** Development, testing, low-latency applications
+
+**Pros:**
+- ✅ Extremely fast inference (~500 tokens/sec)
+- ✅ Free during beta (no cost!)
+- ✅ Good tool calling support
+- ✅ Great for rapid development iterations
+- ✅ Low latency, very responsive
+
+**Cons:**
+- ❌ Not as sophisticated as Claude for complex reasoning
+- ❌ Free tier may have rate limits
+- ❌ Beta service (could change)
+
+**Setup:**
+```bash
+# .env file
+USE_GROQ=true
+GROQ_API_KEY=your_groq_key_here
+GROQ_MODEL=llama-3.3-70b-versatile  # optional, this is the default
+```
+
+**Available Groq Models:**
+- `llama-3.3-70b-versatile` (default, best balance)
+- `llama-3.1-70b-versatile` (good performance)
+- `llama-3.1-8b-instant` (fastest, good for simple tasks)
+- `mixtral-8x7b-32768` (long context)
+- `gemma2-9b-it` (efficient)
+
+Get your API key: [https://console.groq.com/](https://console.groq.com/)
+
+---
+
+### Switching Between Providers
+
+Simply change the `USE_GROQ` environment variable in your `.env` file:
+
+```bash
+# Use Anthropic
+USE_GROQ=false
+ANTHROPIC_API_KEY=your_key_here
+
+# OR use Groq
+USE_GROQ=true
+GROQ_API_KEY=your_key_here
+```
+
+Then restart your backend server. No code changes needed!
+
+---
+
 ## 📦 Setup & Installation
 
 ### Prerequisites
@@ -323,7 +408,9 @@ The frontend's `handleUICommand` function receives these commands and updates Re
 - Python 3.11+
 - Node.js 25+ (specified in package.json)
 - Deepgram API key ([get one here](https://deepgram.com))
-- Anthropic API key ([get one here](https://anthropic.com))
+- **LLM Provider** (choose one):
+  - **Anthropic Claude** API key ([get one here](https://anthropic.com)) - Recommended for production
+  - **Groq** API key ([get one here](https://console.groq.com)) - Free, ultra-fast inference
 
 ### Backend Setup
 
@@ -337,12 +424,24 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Create .env file
+# Create .env file with your chosen LLM provider
+
+# Option 1: Using Anthropic Claude (default, recommended)
 cat > .env << EOL
 DEEPGRAM_API_KEY=your_deepgram_key_here
 ANTHROPIC_API_KEY=your_anthropic_key_here
 DATABASE_PATH=shram.db
+USE_GROQ=false
 EOL
+
+# Option 2: Using Groq (free, ultra-fast)
+# cat > .env << EOL
+# DEEPGRAM_API_KEY=your_deepgram_key_here
+# GROQ_API_KEY=your_groq_key_here
+# GROQ_MODEL=llama-3.3-70b-versatile
+# DATABASE_PATH=shram.db
+# USE_GROQ=true
+# EOL
 
 # Initialize database
 python -c "from app.db.init_db import init_db; init_db()"
