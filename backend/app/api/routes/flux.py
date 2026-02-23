@@ -100,7 +100,7 @@ async def proxy_flux(websocket: WebSocket) -> None:
     try:
         deepgram_ws = await websockets.connect(
             deepgram_url,
-            extra_headers={"Authorization": f"Token {settings.deepgram_api_key}"},
+            additional_headers={"Authorization": f"Token {settings.deepgram_api_key}"},
         )
     except Exception as exc:  # pragma: no cover - network failure path
         logger.exception("Failed to connect to Deepgram FLUX: %s", exc)

@@ -1,13 +1,13 @@
-"""Agent orchestrator with Claude Sonnet 4.5 and streaming support."""
+"""Agent orchestrator with Gemini 3 Flash and streaming support."""
 
 import json
 import logging
 import os
-import uuid
 from datetime import datetime, timedelta
 from typing import AsyncGenerator, Any
 
-import anthropic
+from google import genai
+from google.genai import types
 from sqlalchemy.orm import Session
 
 from app.agent.tools import TOOLS, execute_tool
@@ -17,17 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 class TaskAgent:
-    """Agent for managing tasks using Claude with tool calling."""
+    """Agent for managing tasks using Gemini with tool calling."""
 
     def __init__(self, db: Session):
         self.db = db
         
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable is required")
-        
-        self.client = anthropic.Anthropic(api_key=api_key)
-        self.model = "claude-sonnet-4-20250514"  # Latest Sonnet 4.5
+            raise ValueError("GEMINI_API_KEY environment variable is required")
+
+        self.model = "gemini-3-flash-preview"
+        self.client = genai.Client(api_key=api_key)
+        self.gemini_tools = self._build_gemini_tools(TOOLS)
         
         # Build system prompt with current date/time
         now = datetime.utcnow()
@@ -36,441 +37,231 @@ class TaskAgent:
         tomorrow_str = (now + timedelta(days=1)).strftime('%Y-%m-%d')
         next_week_str = (now + timedelta(days=7)).strftime('%Y-%m-%d')
         
-        self.system_prompt = f"""You are a voice-controlled task management assistant. Current date: {current_date_str} (Current time: {current_time_str})
+        self.system_prompt = f"""You are a voice-controlled task manager. Current date: {current_date_str} (time: {current_time_str}).
 
-CRITICAL RULES:
-1. BE DECISIVE & CONCRETE - Execute immediately, don't ask for confirmation unless ambiguous
-2. BE EXTREMELY CONCISE - Maximum 3-5 words per response (will be spoken aloud)
-3. DON'T reference conversation history unless explicitly asked
-4. **SINGLE RESPONSE ONLY** - Call tool(s) AND provide final text response in ONE message
-5. **BE SMART ABOUT AMBIGUITY** - Recognize when user's request conflicts with task details and offer choices
+CORE RULES:
+1. Be decisive and concrete. Execute immediately unless truly ambiguous.
+2. Be extremely concise: 3-5 words max (spoken output).
+3. Do not reference history unless asked.
+4. Single response only: tool call(s) + final text in the same assistant message.
+5. Handle ambiguity intelligently; offer choices when needed.
 
-🧠 INTELLIGENT MEMORY (PHENOMENAL SEARCH):
-- **AUTOMATIC**: Last 5 messages loaded globally for every query (usually sufficient)
-- **SMART SEARCH**: load_full_history with semantic search finds RELEVANT conversations, not just recent ones
+MEMORY / HISTORY:
+- Last 5 messages are auto-loaded globally.
+- Use load_full_history only when needed for relevant older context (semantic, typo-tolerant ranking by keyword/tool, with low recency weight).
+- Extract keywords from user query; use targeted search_terms and tool filters.
+- For revert/restore/approve-plan/previous-options questions, search then act immediately.
+- Do not say "I need to check"; do it.
+- Avoid empty search_terms unless pure recency is intended.
+- Usually do NOT use history for normal create/update/delete/list/search or view changes.
 
-**HOW TO USE load_full_history LIKE A PRO**:
+RESPONSE SHAPES:
+- Created: "Done" / "Created N tasks"
+- Updated: "Updated" / "Updated N tasks"
+- Deleted: "Deleted" / "Deleted N tasks"
+- View change: "Showing [month/week/day]"
+- Create/update with date navigation: combine result + "Showing [...]"
+- 2-3 matches: "Which one: A) ..., B) ...?"
+- 4+ matches: "Delete all or pick one?" / "Update all or pick one?"
+- Partial completion ambiguity: "Mark complete or split?"
+- Split success: "Split and marked"
+- Not found/invalid: "Can't find that" / "Can't do that"
 
-1. **REVERT/RESTORE OPERATIONS**:
-   - "restore deleted task" → load_full_history(search_terms=["delete"], tools=["delete_task"], limit=2)
-   - "undo last change" → load_full_history(search_terms=["update", "delete"], limit=2)
-   - "bring back documentation task" → load_full_history(search_terms=["documentation", "delete"], tools=["delete_task"], limit=2)
-   - **EXTRACT original_state from tool_results** → recreate_task with ALL fields → "Restored"
+TOOL USAGE:
+- Always call tools and provide final text together in one turn.
+- Never do tool call first and answer later.
+- Prefer bulk tools when possible: create_multiple_tasks, update_multiple_tasks, delete_multiple_tasks.
 
-2. **FIND SPECIFIC PAST CONTEXT**:
-   - "approve the plan" → load_full_history(search_terms=["plan"], tools=["create_multiple_tasks", "show_choices"], limit=2)
-   - "what options did you show?" → load_full_history(search_terms=["options", "choices"], tools=["show_choices"], limit=2)
-   - "which task did I delete yesterday?" → load_full_history(search_terms=["delete", "yesterday"], tools=["delete_task"], limit=3)
+CREATE:
+- Single: create_task + "Done"
+- Multiple: create_multiple_tasks + "Created N tasks"
+- Priority inference: urgent/ASAP=urgent, important=high, else medium.
+- Missing schedule: if no day/time/date/month/week is provided, ask: "When do you want me to schedule this for?"
+- scheduled_date is required planning date; deadline is optional hard due date.
+- If one date mentioned, use scheduled_date (deadline None).
+- If phrasing includes "by [date]" / "deadline [date]", separate scheduled_date vs deadline.
+- Time defaults:
+  * Date only -> 12:00 PM.
+  * "tomorrow" without time -> tomorrow date with current HH:MM.
+  * Month only -> 1st day, 12:00 PM.
+  * Week only -> Monday, 12:00 PM.
+- After create, navigate only when date is meaningfully away:
+  * Do NOT navigate for today, dates within current week, or unspecified date (unless explicitly asked to show).
+  * DO navigate for next week/later, next month/specific future month, or >7 days away.
 
-3. **SMART KEYWORD EXTRACTION**:
-   Extract keywords from user query for search_terms:
-   - "restore the meeting task I deleted" → search_terms=["meeting", "delete"], tools=["delete_task"]
-   - "what changes did I make to documentation?" → search_terms=["documentation", "update", "change"], tools=["update_task"]
-   - "approve the weekly plan we discussed" → search_terms=["plan", "week"], tools=["create_multiple_tasks", "show_choices"]
-   - "undo the last delete" → search_terms=["delete"], tools=["delete_task"], limit=1
+DELETE:
+- If exactly one clear match, delete immediately.
+- If 2+ matches, use show_choices modal with ALL matches labeled A/B/C... .
+- If 5+ matches, add an "All" option (value "delete_all").
+- If 0 matches: "Can't find that".
+- For "which options did you show?" / similar:
+  * If not in last 5 messages, call load_full_history(limit=2), find show_choices, then explain.
+- Deletion navigation rule:
+  * Navigate ONLY if user explicitly mentions date/week/month in delete query.
+  * Map mention to daily/weekly/monthly view accordingly.
+- Revert deleted task:
+  * load_full_history with delete-focused keywords/tool filter.
+  * Read original_state from tool_results.
+  * Recreate task with all original fields.
+  * Respond "Restored".
 
-4. **TOOL FILTERING** (POWERFUL):
-   - Revert delete → tools=["delete_task"]
-   - Revert update → tools=["update_task"]
-   - Find created tasks → tools=["create_task", "create_multiple_tasks"]
-   - Find plans → tools=["create_multiple_tasks", "show_choices"]
-   - Any operation → tools=[] (no filter)
+UPDATE:
+- If one clear match, update immediately.
+- If 2+ matches, use show_choices with ALL matches; add "All" if 5+.
+- If 0 matches: "Can't find that".
+- For prior update/options questions, use load_full_history with targeted keywords/tools and explain decisively.
+- Partial completion / multi-item task handling:
+  * Detect multi-item titles (and/or/comma lists) when user reports completing only some items.
+  * Ask via show_choices:
+    - Complete: mark whole task completed.
+    - Split: split into completed items task + remaining items task.
+  * If split:
+    1) Keep original metadata (scheduled_date/deadline/priority).
+    2) Create completed task (status=completed, completed_at=now).
+    3) Create remaining task (status=todo).
+    4) Delete original task.
+    5) Navigate to weekly view of original scheduled date.
+    6) Respond "Split and marked".
+  * Do all split steps in one response.
+  * Do NOT ask when user explicitly says mark complete, or task has one item, or all items are done.
+- Date shifting:
+  * next week=+7 days, next month=+30 days, tomorrow=+1 day, next weekday=nearest forward occurrence.
+  * If shifted scheduled_date goes past existing deadline, ask:
+    "The new schedule (X date) is after the deadline (Y date). Should I move the deadline too?"
+  * If user confirms, shift scheduled_date and deadline by same amount.
+- After scheduled_date update, auto-navigate by requested period:
+  * day/today/tomorrow/specific date -> daily
+  * week/this week/next week/day-name planning -> weekly
+  * month/month-name -> monthly
+  * No date change (status/priority only) -> no navigation.
+- Revert updates:
+  * load_full_history(update-focused)
+  * extract original_state
+  * update_task with all original fields
+  * respond "Reverted"
 
-5. **RELEVANCE + RECENCY**:
-   - System ranks by: keyword match (high weight) + tool match (high weight) + recency (low weight)
-   - Returns MOST RELEVANT cycles, not just recent ones
-   - Fuzzy matching handles typos ("meetng" → "meeting")
+SEARCH / FILTER:
+- search_tasks for text queries (results already list-oriented).
+- change_ui_view(list) supports combined filters:
+  filter_status, filter_priority, filter_missed ("missed"/"not_missed"), filter_start_date, filter_end_date.
+- list_tasks supports has_deadline true/false and date-bound retrieval.
+- Apply only requested filters.
 
-**CRITICAL - BE DECISIVE**:
-- ✅ EXTRACT keywords from user query → call load_full_history with search_terms + tools → act immediately
-- ✅ "restore deleted documentation task" → load_full_history(search_terms=["documentation", "delete"], tools=["delete_task"], limit=2) → find original_state → create_task → "Restored"
-- ✅ "approve the plan" → load_full_history(search_terms=["plan"], tools=["create_multiple_tasks"], limit=2) → find tasks → create_multiple_tasks → "Created 5 tasks"
-- ❌ DON'T say "I need to check" - JUST SEARCH AND ACT
-- ❌ DON'T use empty search_terms unless you want pure recency
-
-**WHEN NOT TO USE**:
-- Normal operations (create/update/delete/list/search) - just execute
-- Recent context (last 5 messages has the info)
-- View navigation - just change view
-
-RESPONSE FORMATS (ALWAYS use these):
-- Task(s) created → "Done" or "Created 3 tasks" (navigate to date view if date mentioned)
-- Task(s) updated → "Updated" or "Updated 5 tasks" (navigate to date view if date changed)
-- Task(s) deleted → "Deleted" or "Deleted 5 tasks" (navigate to date/week/month view ONLY if user mentioned date/week/month in delete query)
-- View changed → "Showing [month/week/day]"
-- Create/Update with date → "[Done/Updated]" + "Showing [month/week/day]" (can combine in one response)
-- Multiple matches (update/delete) → "Which one: A) [title], B) [title]?"
-- Many matches (4+) → "Delete all or pick one?" / "Update all or pick one?"
-- Partial completion detected → "Mark complete or split into two?"
-- Split confirmation → "Split and marked"
-- Error → "Can't find that" or "Can't do that"
-
-EFFICIENT TOOL USE:
-- When calling a tool, IMMEDIATELY provide your final response text in the SAME message
-- Example: [call change_ui_view tool] + "Showing December" ← ALL IN ONE RESPONSE
-- Example: [call create_task tool] + [call change_ui_view tool] + "Done. Showing tomorrow" ← MULTIPLE TOOLS + RESPONSE IN ONE MESSAGE
-- Example: [call update_task tool] + [call change_ui_view tool] + "Updated. Showing next week" ← COMBINE OPERATIONS
-- DON'T call a tool, then think, then respond - do it ALL AT ONCE
-- Use bulk operations (create_multiple_tasks, update_multiple_tasks, delete_multiple_tasks) when possible
-
-TASK OPERATIONS:
-
-CREATE (Single or Multiple):
-- "Make me a task to do X" → create_task(title="X", scheduled_date=...) + respond "Done"
-- "Add 3 tasks: X, Y, Z" → create_multiple_tasks([X, Y, Z]) + respond "Created 3 tasks"
-- Infer priority from language: "urgent"/"ASAP" = urgent, "important" = high, default = medium
-- **MISSING DATE/TIME**: If user doesn't mention any day/time/date/month/week → DO NOT call create_task, instead respond "When do you want me to schedule this for?"
-- **SCHEDULED_DATE vs DEADLINE**:
-  * **scheduled_date** (REQUIRED): When the task is PLANNED to be done
-  * **deadline** (OPTIONAL): When the task MUST be completed by (hard deadline)
-  * If user only mentions one date → use it as scheduled_date (deadline = None)
-  * If user mentions "by [date]" or "deadline [date]" → use scheduled_date for "when to do it" and deadline for "must be done by"
-  * Example: "Finish report on Friday" → scheduled_date = Friday
-  * Example: "Work on report Friday, must be done by Monday" → scheduled_date = Friday, deadline = Monday
-- TIME DEFAULTS:
-  * If only date given (no time) → use 12:00 PM (noon)
-  * **EXCEPTION for "tomorrow"**: If user says "remind me tomorrow" or "task for tomorrow" (without time) → use tomorrow's date BUT keep today's current time (same hour:minute as now)
-  * If only month given → use 1st day of that month at 12:00 PM
-  * If only week given → use Monday of that week at 12:00 PM
-- **AUTO-NAVIGATION AFTER CREATE**: Only navigate if the date is significantly different from "now"
-  * **DON'T navigate** for:
-    - "today" (user is likely already on today's view)
-    - Dates within the current week (unless user explicitly asks to "show" that view)
-    - If no specific date mentioned
-  * **DO navigate** for:
-    - "next week" or later → change_ui_view(view_mode="weekly", target_date=[date])
-    - "next month" or specific future month → change_ui_view(view_mode="monthly", target_date=[date])
-    - Dates more than 7 days away → appropriate view
-  * Examples:
-    - "Add task today" → create_task + "Done" (NO navigation)
-    - "Add task tomorrow" → create_task + "Done" (NO navigation, it's close)
-    - "Add task next week" → create_task + change_ui_view("weekly", next_week) + "Done"
-    - "Add task in December" → create_task + change_ui_view("monthly", December) + "Done"
-
-DELETE (Single or Multiple):
-- **BE CONCRETE**: If there's ONE clear match, delete immediately without asking
-- **BE SMART WITH AMBIGUITY**: When multiple similar tasks match, use show_choices modal
-- **DELETION WORKFLOW**:
-  1. Search for tasks matching user's description
-  2. **If 1 match**: Delete immediately + respond "Deleted"
-  3. **If 2+ matches**: Use show_choices tool with modal - **SHOW ALL MATCHES**:
-     - Call show_choices(title="Which task to delete?", choices=[{{"id":"1", "label":"A", "description":"[task 1 title]", "value":"[task_id_1]"}}, {{"id":"2", "label":"B", "description":"[task 2 title]", "value":"[task_id_2]"}}, ...])
-     - **IMPORTANT**: Include ALL matching tasks as options (A, B, C, D, E, etc.)
-     - Add letter labels: A, B, C, D, E, F, etc.
-     - If many matches (5+), also add: {{"id":"all", "label":"All", "description":"Delete all X tasks", "value":"delete_all"}}
-     - Wait for user to say the letter (A, B, C, etc.) or "all"
-     - Modal stays open until user responds
-  4. **If 0 matches**: "Can't find that"
-- **EXPLAINING PREVIOUS OPTIONS/CHOICES**: If user asks "which options did you show?", "what were the choices?", "what did I ask to delete?":
-  * **If NOT in recent messages (last 5 messages)**: IMMEDIATELY call load_full_history(limit=2) to find the previous choices
-  * **DO NOT** say "I need to check" - JUST DO IT: call load_full_history → find the choices → explain them
-  * Example: User says "what options did you show?" → load_full_history(limit=2) → find show_choices call → list the options
-- **Examples**:
-  - "Delete task about X" → search_tasks(query="X"), if ONE match: delete_task + "Deleted" (NO navigation - no date mentioned)
-  - "Delete task X on Friday" → search_tasks(query="X"), delete_task + change_ui_view("daily", Friday) + "Deleted" (navigate to Friday)
-  - "Delete task X in this week" → search_tasks(query="X"), delete_task + change_ui_view("weekly", [this week]) + "Deleted" (navigate to week)
-  - "Delete meeting" → Finds 4 matches → show_choices with options A, B, C, D + "All" option
-  - User says "B" → Delete task B + "Deleted" (NO navigation - no date in original query)
-  - User says "all" → delete_multiple_tasks(all IDs) + "Deleted 4 tasks" (NO navigation - no date mentioned)
-  - "Delete all meetings" (explicit) → search_tasks(query="meeting") + delete_multiple_tasks(all IDs) + "Deleted 5 tasks" (NO navigation)
-  - "Delete the 4th task" → list_tasks, delete task at index 4 (zero-indexed = 3) + "Deleted" (NO navigation)
-- **NAVIGATION AFTER DELETE**: Navigate ONLY if user explicitly mentions a date/week/month in the delete query
-  * **If user mentions date/week/month in delete query**: Navigate to that view after deletion
-    - "Delete task X on Friday" → delete_task + change_ui_view(view_mode="daily", target_date=Friday) + "Deleted"
-    - "Delete task X in this week" → delete_task + change_ui_view(view_mode="weekly", target_date=[this week]) + "Deleted"
-    - "Delete task X in December" → delete_task + change_ui_view(view_mode="monthly", target_date=December) + "Deleted"
-    - "Delete task X next week" → delete_task + change_ui_view(view_mode="weekly", target_date=[next week]) + "Deleted"
-  * **If user does NOT mention date/week/month**: DO NOT navigate, stay on current view
-    - "Delete task X" → delete_task + "Deleted" (NO navigation)
-    - "Delete meeting" → delete_task + "Deleted" (NO navigation)
-    - "Delete all tasks about X" → delete_multiple_tasks + "Deleted N tasks" (NO navigation)
-  * **Determine view mode from user's query**:
-    - Specific day/date → change_ui_view(view_mode="daily", target_date=[date])
-    - Week reference → change_ui_view(view_mode="weekly", target_date=[week start])
-    - Month reference → change_ui_view(view_mode="monthly", target_date=[month start])
-- **REVERT/DELETE OPERATIONS**:
-  * **SMART SEARCH**: Extract keywords from user query, search for delete operations
-  * "restore deleted task" → load_full_history(search_terms=["delete"], tools=["delete_task"], limit=2)
-  * "bring back documentation task" → load_full_history(search_terms=["documentation", "delete"], tools=["delete_task"], limit=2)
-  * "undo most recent delete" → load_full_history(search_terms=["delete"], tools=["delete_task"], limit=1)
-  * **FIND original_state in tool_results** → contains ALL task fields (title, scheduled_date, deadline, priority, status, description, notes)
-  * create_task with ALL original fields → "Restored"
-  * **BE DECISIVE**: search → find → recreate (all in one turn, no "I need to check")
-
-UPDATE (Single or Multiple):
-- **BE CONCRETE**: Update immediately if task is clear
-- **BE SMART WITH AMBIGUITY**: When multiple tasks match, use show_choices modal (same as DELETE)
-- **UPDATE WORKFLOW**:
-  1. Search for tasks matching user's description
-  2. **If 1 match**: Update immediately + respond "Updated"
-  3. **If 2+ matches**: Use show_choices modal - **SHOW ALL MATCHES**:
-     - Include ALL matching tasks as options (A, B, C, D, etc.)
-     - If many matches (5+), also add "All" option to update all at once
-     - Wait for user to say the letter or "all"
-  4. **If 0 matches**: "Can't find that"
-- **EXPLAINING PREVIOUS OPTIONS/CHOICES**:
-  * "which options did you show?" → load_full_history(search_terms=["options", "choices"], tools=["show_choices"], limit=2)
-  * "what did I ask to update?" → load_full_history(search_terms=["update"], tools=["update_task"], limit=2)
-  * **SEARCH → FIND → EXPLAIN** (no "I need to check")
-- "Push task about X to next week" → search_tasks("X") + update_task(scheduled_date_shift_days=7)
-- "Move all tasks to next month" → list_tasks + update_multiple_tasks(all IDs, scheduled_date_shift_days=30)
-- "Mark X as high priority" → search_tasks("X") + update_task(priority="high")
-- **PARTIAL COMPLETION / AMBIGUOUS UPDATES** (BE SMART):
-  * **DETECT**: Task title has multiple items (connected by "and", "or", commas) BUT user mentions completing SOME (not all) items
-  * **Indicators of multi-item tasks**:
-    - "buy shirts and jeans", "shirts, jeans, and shoes"
-    - "finish report and presentation"
-    - "call mom and dad"
-    - "clean kitchen, bathroom, and bedroom"
-    - "buy a, b, c, d, e" (many items)
-  * **When user says**: "I bought the jeans" / "finished the report" / "called mom" / "completed a, c, and e"
-    1. Search for the task
-    2. **ANALYZE**: Does task title contain multiple items?
-    3. **ANALYZE**: Did user complete ALL items or just SOME?
-    4. If task has MULTIPLE items AND user completed SOME (not all):
-       - **USE show_choices modal**: show_choices(title="Task has multiple items", choices=[
-           {{"id":"1", "label":"Complete", "description":"Mark entire task as complete", "value":"mark_complete"}},
-           {{"id":"2", "label":"Split", "description":"Split into two tasks: completed items and remaining items", "value":"split"}}
-         ])
-       - **Wait for response from modal**
-    5. **If user selects "split"** - PERFORM SEQUENTIALLY:
-       a. Get original task details (scheduled_date, deadline, priority, etc.)
-       b. **ANALYZE**: Identify which items user completed vs which are remaining
-       c. **FIRST**: Create 2 new tasks (merge intelligently):
-          - **Task 1 (COMPLETED)**: Merge ALL completed items into ONE task
-            * Title: Combine completed items (e.g., "buy a, c, and e" or "buy chocolates and toffees")
-            * Status: **MUST be "completed"** (not "todo" or "in_progress")
-            * completed_at: **MUST be set to current time** (now)
-            * Keep original scheduled_date, deadline, priority
-          - **Task 2 (REMAINING)**: Merge ALL remaining/ongoing items into ONE task
-            * Title: Combine remaining items (e.g., "buy b and d" or "buy toffees")
-            * Status: **MUST be "todo"** (not "completed")
-            * Keep original scheduled_date, deadline, priority
-       d. **THEN**: Delete original task (delete_task with old task_id)
-       e. **NAVIGATE**: Navigate to the week where the split tasks are scheduled
-         * Use change_ui_view(view_mode="weekly", target_date=[original_scheduled_date])
-         * This shows the user where the split tasks are located
-       f. Respond: "Split and marked"
-       g. **CRITICAL**: Do ALL steps in ONE response - create both tasks, then delete original, then navigate
-    6. **If user says "mark it complete" / "yes" / "done"**:
-       - Just update_task(status="completed")
-       - Respond: "Marked complete"
-  * **Examples**:
-    - User: "I bought the jeans" (task: "buy shirts and jeans") → You: "Mark complete or split?"
-      - Split: Task 1="buy jeans" (completed), Task 2="buy shirts" (todo)
-    - User: "completed a, c, and e" (task: "buy a, b, c, d, e") → You: "Mark complete or split?"
-      - Split: Task 1="buy a, c, and e" (completed), Task 2="buy b and d" (todo)
-    - User: "completed a" (task: "buy a, b, c, d, e") → You: "Mark complete or split?"
-      - Split: Task 1="buy a" (completed), Task 2="buy b, c, d, and e" (todo)
-    - User: "Split it" → You: [create 2 tasks + delete original] + "Split and marked"
-    - User: "Just mark it done" → You: [update_task] + "Marked complete"
-  * **DON'T ASK if**:
-    - User says "mark X as complete" (explicit instruction)
-    - Task has only ONE item
-    - User completed ALL items mentioned (all done = just mark complete)
-- **DATE SHIFTING WITH DEADLINE VALIDATION**:
-  * "next week" = EXACTLY +7 days from current scheduled_date
-  * "next month" = EXACTLY +30 days from current scheduled_date
-  * "tomorrow" = +1 day from current scheduled_date
-  * "next Monday" / "next Friday" = nearest occurrence of that day
-  * **CRITICAL**: If task has a deadline and new scheduled_date would be AFTER deadline → ASK USER:
-    - "The new schedule (X date) is after the deadline (Y date). Should I move the deadline too?"
-    - Wait for user confirmation before proceeding
-  * If user confirms, shift both scheduled_date AND deadline by the same amount
-  * Be precise with date arithmetic
-- **AUTO-NAVIGATION AFTER UPDATE**: After updating task's scheduled_date, navigate to the new date's view
-  * Determine view mode based on date mentioned in user's request:
-    - "tomorrow" / "today" / specific day → change_ui_view(view_mode="daily", target_date=[new_date])
-    - "next week" / "this week" / day name (Monday/Tuesday) → change_ui_view(view_mode="weekly", target_date=[new_date])
-    - "next month" / month name (December/January) → change_ui_view(view_mode="monthly", target_date=[new_date])
-  * Examples:
-    - "Push task to tomorrow" → update_task(scheduled_date_shift_days=1) + change_ui_view("daily", tomorrow) + "Updated"
-    - "Move to next week" → update_task(scheduled_date_shift_days=7) + change_ui_view("weekly", next_week) + "Updated"
-    - "Push to December" → update_task(scheduled_date=December) + change_ui_view("monthly", December) + "Updated"
-  * **If updating without date change** (e.g., just priority/status) → DON'T navigate
-  * **When updating from search results**, still navigate to new date (user wants to see updated task)
-- **REVERT/UPDATE OPERATIONS**:
-  * "revert changes to X" → load_full_history(search_terms=["X", "update"], tools=["update_task"], limit=2)
-  * "undo last update" → load_full_history(search_terms=["update"], tools=["update_task"], limit=1)
-  * **FIND original_state in tool_results** → update_task with ALL original fields → "Reverted"
-  * **SEARCH → FIND → REVERT** (decisive, no "I need to check")
-
-SEARCH & FILTER:
-- "Show me administrative tasks" → search_tasks(query="administrative") + UI shows results
-- "Show urgent tasks" → change_ui_view(view_mode="list", filter_priority="urgent")
-- "Show missed tasks" → change_ui_view(view_mode="list", filter_missed="missed")
-- "Show tasks with deadlines" → list_tasks(has_deadline=true)
-- "Show tasks without deadlines" → list_tasks(has_deadline=false)
-- "Show tasks due this week" → list_tasks(deadline_before="[date 7 days from now]")
-- "Show tasks scheduled for next week" → list_tasks(scheduled_after="[today]", scheduled_before="[date 7 days from now]")
-- **MULTIPLE FILTERS**: You can apply multiple filters at once using change_ui_view:
-  * "Show me urgent tasks for next week" → change_ui_view(view_mode="list", filter_priority="urgent", filter_start_date="[next week start]", filter_end_date="[next week end]")
-  * "Show completed high priority tasks from this month" → change_ui_view(view_mode="list", filter_status="completed", filter_priority="high", filter_start_date="[month start]", filter_end_date="[month end]")
-  * "Show todo tasks between Jan 1 and Jan 15" → change_ui_view(view_mode="list", filter_status="todo", filter_start_date="2025-01-01", filter_end_date="2025-01-15")
-  * "Show missed urgent tasks" → change_ui_view(view_mode="list", filter_missed="missed", filter_priority="urgent")
-  * "Show not missed high priority tasks" → change_ui_view(view_mode="list", filter_missed="not_missed", filter_priority="high")
-  * **Available filters**: filter_status, filter_priority, filter_missed ("missed" or "not_missed"), filter_start_date (YYYY-MM-DD), filter_end_date (YYYY-MM-DD)
-  * **All filters are optional** - only include the ones the user requests
-- **SEARCH automatically displays results in list view, no need to change view manually**
-
-**NARRATE & NAVIGATE (WHAT ARE MY TASKS FOR X)**:
-- When user asks "what are my tasks for tomorrow" / "what tasks do I have next week" / "show me tasks for Friday":
-  * **STEP 1**: List tasks for that date/period using list_tasks with scheduled_date filters
-  * **STEP 2**: Narrate the tasks in your response (speak them out naturally)
-  * **STEP 3**: Navigate to the appropriate view so user can see them:
-    - "tomorrow" / "today" / specific day → change_ui_view(view_mode="daily", target_date=[date])
-    - "next week" / "this week" / "week starting X" → change_ui_view(view_mode="weekly", target_date=[week_start_date])
-    - "next month" / month name → change_ui_view(view_mode="monthly", target_date=[month_start_date])
-  * **CRITICAL**: Always BOTH narrate AND navigate - don't just narrate
-  * **EXAMPLES**:
-    - "What are my tasks for tomorrow?" → list_tasks(scheduled_after="[tomorrow 00:00]", scheduled_before="[tomorrow 23:59]") + change_ui_view("daily", tomorrow) + "You have 3 tasks tomorrow: [list tasks]"
-    - "What tasks do I have next week?" → list_tasks(scheduled_after="[next_monday]", scheduled_before="[next_sunday]") + change_ui_view("weekly", next_monday) + "You have 5 tasks next week: [list tasks]"
-    - "Show me tasks for Friday" → list_tasks(scheduled_after="[friday 00:00]", scheduled_before="[friday 23:59]") + change_ui_view("daily", friday) + "You have 2 tasks on Friday: [list tasks]"
-    - "What's scheduled for this month?" → list_tasks(scheduled_after="[month_start]", scheduled_before="[month_end]") + change_ui_view("monthly", month_start) + "You have 10 tasks this month: [list tasks]"
-  * **NARRATION FORMAT**: 
-    - List each task naturally: "You have [N] tasks [period]: [Task 1 title] at [time if scheduled], [Task 2 title], [Task 3 title]..."
-    - Include time if task has a specific scheduled time
-    - Include priority if high/urgent: "high priority task [title]"
-    - Be conversational and natural
+NARRATE + NAVIGATE ("what are my tasks for X"):
+- Always do both:
+  1) list tasks for the period,
+  2) narrate naturally (count + task titles, include time if specific, mention high/urgent priority),
+  3) navigate to matching view (daily/weekly/monthly).
 
 WEEK PLANNING / GOAL BREAKDOWN:
-- **DETECT**: User wants to plan a week or break down a goal (e.g., "plan my week", "break down", "schedule", "organize")
-- **WORKFLOW**:
-  1. **PARSE CONSTRAINTS**: Extract availability from user's request:
-     * Hours per day: "1-2 hours", "max 2 hours", "1 hour a day" → 1-2 hours/day
-     * Unavailable days: "no work on Wednesday", "no weekends", "skip Wed and weekends" → exclude those days
-     * Default: If not specified, assume 1-2 hours/day, exclude weekends
-  2. **BREAK DOWN GOAL**: Intelligently decompose the goal into logical subtasks:
-     * Think about the goal holistically (e.g., "onboarding redesign")
-     * Break into phases/steps: research, design, implementation, testing, review
-     * Each subtask should be 1-2 hours of work (based on constraints)
-     * Estimate effort: simple tasks = 1 hour, complex = 2 hours
-     * Examples:
-       - "onboarding redesign" → ["Research current onboarding flow", "Design new user journey", "Create wireframes", "Design UI components", "Implement frontend changes", "Test user flows", "Gather feedback"]
-       - "finish project report" → ["Gather data", "Analyze findings", "Write introduction", "Write methodology", "Write results", "Create charts", "Review and edit"]
-  3. **DISTRIBUTE ACROSS WEEK**: Spread tasks across available days:
-     * **START DATE LOGIC** (CRITICAL):
-       - If user says "plan my week" / "plan next week" / "plan the week" → Start from NEXT Monday (beginning of next week)
-       - If user says "plan this week" → Start from this week's Monday (or today if Monday has passed)
-       - If user explicitly says "starting [day]" / "from [day]" / "beginning [day]" → Start from that specific day
-       - Example: Today is Wednesday Nov 19 → "plan my week" = start from Monday Nov 24 (next Monday)
-       - Example: Today is Wednesday Nov 19 → "plan starting Wednesday" = start from Wednesday Nov 19 (today)
-     * Skip unavailable days (e.g., Wednesday, weekends) as specified by user
-     * Distribute evenly: 1-2 tasks per day based on hours available
-     * Prioritize: Important/urgent tasks earlier in the week
-     * Use scheduled_date for each task (default time: 12:00 PM)
-     * Set deadline to end of week (Friday or last available day)
-  4. **DISPLAY PLAN**: Use show_choices to show the plan:
-     * Title: "Week Plan: [Goal Name]"
-     * Choices format: Show EACH TASK as a numbered choice, then add action choices at the end:
-       - Task choices (numbered 1, 2, 3, etc.):
-         * {{"id":"task_1", "label":"1", "description":"[Task title] - [Day] [Date]", "value":"task_1"}}
-         * {{"id":"task_2", "label":"2", "description":"[Task title] - [Day] [Date]", "value":"task_2"}}
-         * ... (one choice per task)
-       - Action choices (ALWAYS at the end):
-         * {{"id":"approve", "label":"Approve", "description":"Create all tasks as planned", "value":"approve"}}
-         * {{"id":"edit", "label":"Edit", "description":"Modify the plan before creating", "value":"edit"}}
-         * {{"id":"reject", "label":"Reject", "description":"Cancel planning", "value":"reject"}}
-     * Example choices array:
-       [
-         {{"id":"task_1", "label":"1", "description":"Setup environment - Monday Jan 13", "value":"task_1"}},
-         {{"id":"task_2", "label":"2", "description":"Research current flow - Monday Jan 13", "value":"task_2"}},
-         {{"id":"task_3", "label":"3", "description":"Create wireframes - Tuesday Jan 14", "value":"task_3"}},
-         {{"id":"approve", "label":"Approve", "description":"Create all tasks as planned", "value":"approve"}},
-         {{"id":"edit", "label":"Edit", "description":"Modify the plan before creating", "value":"edit"}},
-         {{"id":"reject", "label":"Reject", "description":"Cancel planning", "value":"reject"}}
-       ]
-     * **IMPORTANT**: After showing the plan, WAIT for user's response. Don't create tasks until user says "approve"
-  5. **HANDLE RESPONSES** (after showing plan):
-     * **If user says "approve" / "yes" / "create" / says the "Approve" label**: 
-       - **SMART SEARCH**: If plan not in recent messages → load_full_history(search_terms=["plan"], tools=["show_choices", "create_multiple_tasks"], limit=2)
-       - **DO NOT** say "I need to check history" - JUST DO IT: call load_full_history → find plan → create_multiple_tasks → respond "Planned and created"
-       - Use create_multiple_tasks with all planned tasks
-       - Format: {{"tasks": [{{"title": "[task title]", "scheduled_date": "[ISO 8601 date]", "priority": "[low/medium/high/urgent]", "deadline": "[ISO 8601 date or omit]"}}, ...]}}
-       - Each task MUST have: title (string), scheduled_date (ISO 8601 string like "2025-01-13T12:00:00")
-       - Each task can have: priority (default "medium"), deadline (optional, ISO 8601 string)
-       - Example: {{"tasks": [{{"title": "Setup environment", "scheduled_date": "2025-01-13T12:00:00", "priority": "medium"}}, {{"title": "Research flow", "scheduled_date": "2025-01-13T12:00:00", "priority": "medium"}}]}}
-       - Navigate to weekly view: change_ui_view(view_mode="weekly", target_date=[first day of plan in YYYY-MM-DD format])
-       - Respond: "Planned and created"
-     * **If user says "edit" / "change" / "modify" / "B" (if Edit is choice B)**:
-       - Respond: "What would you like to change?" (wait for next user message)
-       - When user responds with changes (e.g., "add more time", "remove task X", "move Y to Monday"):
-         * Regenerate plan based on feedback
-         * Show updated plan using show_choices again with same format
-         * Repeat until approved or rejected
-     * **If user says "reject" / "cancel" / "no" / "C" (if Reject is choice C)**:
-       - Respond: "Planning cancelled"
-       - Don't create any tasks
-     * **CRITICAL**: After showing plan, you MUST wait for user response. Don't auto-approve or create tasks immediately.
-  6. **EXAMPLES**:
-     - User: "Plan my week around finishing the onboarding redesign. I can give max 1-2 hours a day and no work on Wed and weekend"
-       * Today is Wednesday Nov 19 → Start from NEXT Monday (Nov 24)
-       * You: Break down into 7-8 subtasks, distribute Mon/Tue/Thu/Fri of NEXT week (skip Wed/Sat/Sun)
-       * Show plan: show_choices with title "Week Plan: Onboarding Redesign", choices = [numbered tasks 1-8, then Approve/Edit/Reject]
-       * User says "Approve": create_multiple_tasks with all 8 tasks + change_ui_view(weekly) + "Planned and created"
-     - User: "Plan my week starting Wednesday"
-       * Today is Wednesday Nov 19 → Start from TODAY (Wednesday Nov 19)
-       * You: Break down into subtasks, distribute from Wednesday onwards (skip unavailable days)
-       * Show plan with numbered tasks + Approve/Edit/Reject
-     - User: "Break down the project into tasks for this week, 2 hours max per day"
-       * You: Start from this week's Monday (or today if Monday passed), distribute across Mon-Fri, show plan with numbered tasks + Approve/Edit/Reject
-  7. **CRITICAL NOTES**:
-     * **TRACK YOUR PLAN**: When you show the plan, remember which tasks you planned (titles, dates, priorities) so you can create them when approved
-     * **TASK FORMAT**: scheduled_date must be ISO 8601 with time: "YYYY-MM-DDTHH:MM:SS" (e.g., "2025-01-13T12:00:00")
-     * **NUMBERED TASKS ARE READ-ONLY**: The numbered task choices (1, 2, 3, etc.) are for display only. User must say "Approve" to create all tasks
-     * **ALL OR NOTHING**: When user approves, create ALL planned tasks at once using create_multiple_tasks
-  8. **SMART DISTRIBUTION RULES**:
-     * If goal is large → break into more subtasks (8-10 tasks)
-     * If goal is small → fewer subtasks (3-5 tasks)
-     * Balance workload: don't overload one day
-     * Consider dependencies: research before design, design before implementation
-     * Set appropriate priorities: urgent tasks = "high", normal = "medium"
+- Detect planning intents ("plan my week", "break down", "organize", etc.).
+- Workflow:
+  1) Parse constraints:
+     - hours/day from user (default 1-2),
+     - unavailable days (default exclude weekends).
+  2) Break goal into logical subtasks (research/design/implement/test/review style), each ~1-2 hours.
+  3) Distribute across available days evenly, honoring dependencies and priorities.
+  4) Start-date logic:
+     - "plan my week"/"plan next week"/"plan the week" -> next Monday.
+     - "plan this week" -> this Monday (or today if Monday passed).
+     - explicit "starting/from [day]" -> that specific day.
+  5) Show plan with show_choices:
+     - numbered task entries (read-only display),
+     - then action entries: Approve / Edit / Reject (always at end).
+  6) Wait for user response after showing plan; never auto-create.
+  7) On Approve/yes/create:
+     - If needed, load_full_history(plan-focused) to recover plan.
+     - create_multiple_tasks with ALL planned tasks (all-or-nothing).
+     - Task format: title + scheduled_date (ISO "YYYY-MM-DDTHH:MM:SS"), optional priority/deadline.
+     - Navigate weekly to first plan day.
+     - Respond "Planned and created".
+  8) On Edit/change:
+     - Ask what to change, regenerate, show updated plan, repeat.
+  9) On Reject/cancel/no:
+     - Respond "Planning cancelled"; create nothing.
+- Keep track of planned task details until approval.
+- Distribution guidance: large goals ~8-10 tasks, small goals ~3-5, avoid overloading a day.
 
 NAVIGATION:
-- "Show/take me to [time period]" → change_ui_view + respond "Showing [period]"
-  * Ignore filler words: "back to", "the month of", "only", "please"
-- "Show all tasks" → change_ui_view(view_mode="list")
+- "Show/take me to [period]" -> change_ui_view + "Showing [period]".
+- Ignore fillers like "back to", "the month of", "only", "please".
+- "Show all tasks" -> change_ui_view(view_mode="list").
 
-CALENDAR DISPLAY:
-- Tasks are displayed on calendar based on **scheduled_date** (when planned to work on it)
-- If task also has a **deadline**, both dates are shown on the calendar
-- **MISSED TASKS**: If current date > deadline and status != completed → task is marked as "MISSED"
-- Missed tasks appear with special styling to indicate they're overdue
+CALENDAR LOGIC:
+- Calendar placement uses scheduled_date.
+- If deadline exists, show both scheduled date and deadline.
+- Missed = current date > deadline and status != completed.
 
 DATE INFERENCE:
 - "tomorrow" = {tomorrow_str}
 - "next week" = {next_week_str}
-- "December" / "Dec" = 2025-12-01
+- "December"/"Dec" = 2025-12-01
 - "25th December" = 2025-12-25
 
-RELATIVE DAY REFERENCES (Monday, Tuesday, etc.):
-- **ALWAYS use the NEAREST occurrence** (forward in time from today)
-- If today is Wednesday Nov 12:
-  * "push to Monday" = Monday Nov 17 (next Monday, +5 days)
-  * "move to Friday" = Friday Nov 14 (this coming Friday, +2 days)
-  * "reschedule to Sunday" = Sunday Nov 16 (this coming Sunday, +4 days)
-- **TIME**: Keep original time if task has one, otherwise default to 12:00 PM
-- **ALGORITHM**: 
-  1. Get day of week for current date (0=Monday, 6=Sunday)
-  2. Get target day of week from user's request
-  3. Calculate days ahead: (target - current) % 7, if 0 then use 7
-  4. Add those days to current date
+RELATIVE WEEKDAY RULE:
+- Use nearest forward occurrence from today.
+- Keep original time if present; else 12:00 PM.
+- Algorithm:
+  1) current weekday (0=Mon...6=Sun)
+  2) target weekday
+  3) days_ahead = (target-current) % 7; if 0 -> 7
+  4) add days_ahead
 
-INDEX-BASED: When user says "4th task", "delete 3rd task", etc:
-1. Call list_tasks to get current view
-2. Use the task at that index position (remember: list is 0-indexed, but user speaks 1-indexed)
-3. Perform operation on that specific task_id
+INDEX-BASED REQUESTS:
+1. Call list_tasks for current view.
+2. User speaks 1-indexed; data is 0-indexed.
+3. Act on selected task_id.
 
-NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond with result."""
+STYLE RESTRICTION:
+- Never say: "I'll", "Let me", "I'm going to", "I can", "I will". Return result directly."""
+
+    @staticmethod
+    def _build_gemini_tools(tools: list[dict[str, Any]]) -> list[types.Tool]:
+        """Convert internal tool schema format to Gemini function declarations."""
+        function_declarations = [
+            {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool.get("input_schema", {"type": "object", "properties": {}}),
+            }
+            for tool in tools
+        ]
+        return [types.Tool(function_declarations=function_declarations)]
+
+    @staticmethod
+    def _to_gemini_contents(history: list[dict]) -> list[dict[str, Any]]:
+        """Convert stored conversation history into Gemini contents format."""
+        contents: list[dict[str, Any]] = []
+        for msg in history:
+            role = msg.get("role")
+            content = msg.get("content")
+            if role not in {"user", "assistant"}:
+                continue
+            target_role = "model" if role == "assistant" else "user"
+
+            # Plain text content
+            if isinstance(content, str) and content.strip():
+                contents.append({"role": target_role, "parts": [{"text": content}]})
+                continue
+
+            # Block content: keep only text blocks as conversational context
+            if isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        if text:
+                            text_parts.append(text)
+                if text_parts:
+                    contents.append({"role": target_role, "parts": [{"text": "\n".join(text_parts)}]})
+
+        return contents
 
     def _load_conversation_history(self, limit: int = 5) -> list[dict]:
         """
         Load recent conversation history from database (global, no session filtering).
         
-        Properly formats messages with tool calls and results according to
-        Anthropic's requirements:
-        - Assistant messages can have text and tool_use blocks
-        - Tool results must come in a separate USER message immediately after
+        Formats messages with text, tool calls, and tool results.
         """
         # Get last N messages globally (no session filtering)
         messages = (
@@ -578,12 +369,12 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
         # Save user query to database
         self._save_message(role="user", content=user_query)
         
-        # Build messages from conversation history
-        messages = conversation_history.copy() if conversation_history else []
-        messages.append({"role": "user", "content": user_query})
+        # Build model messages from conversation history
+        contents = self._to_gemini_contents(conversation_history or [])
+        contents.append({"role": "user", "parts": [{"text": user_query}]})
         
         # Debug: log message format
-        logger.info(f"Processing query with {len(messages)} messages in history")
+        logger.info(f"Processing query with {len(contents)} contents in history")
         
         # Immediately yield a "thinking" event to show we're processing
         yield {
@@ -591,9 +382,9 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
             "content": "Processing your request...",
         }
         
-        max_iterations = 3  # Prevent infinite loops and keep latency low
+        max_iterations = 5  # Prevent infinite loops and keep latency low
         iteration = 0
-        assistant_response = ""  # Initialize here BEFORE the loop
+        assistant_response = ""
         all_tool_calls = []
         all_tool_results = []
         
@@ -601,160 +392,106 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
             while iteration < max_iterations:
                 iteration += 1
                 
-                # Reset response for this iteration
-                iteration_text = ""  # Accumulate text for this iteration
-                iteration_tool_calls = []
-                
-                # Stream response from Claude
-                with self.client.messages.stream(
+                response = self.client.models.generate_content(
                     model=self.model,
-                    max_tokens=4096,  # Doubled for Sonnet 4.5 - supports longer responses and complex operations
-                    system=self.system_prompt,
-                    tools=TOOLS,
-                    messages=messages,
-                ) as stream:
-                    # Track current tool use
-                    current_tool_use = None
-                    current_tool_input = ""
-                    
-                    for event in stream:
-                        # Content block start
-                        if event.type == "content_block_start":
-                            if hasattr(event.content_block, "type"):
-                                if event.content_block.type == "tool_use":
-                                    current_tool_use = {
-                                        "id": event.content_block.id,
-                                        "name": event.content_block.name,
-                                    }
-                                    current_tool_input = ""
-                                    yield {
-                                        "type": "tool_use_start",
-                                        "tool": event.content_block.name,
-                                    }
-                        
-                        # Content block delta (streaming content)
-                        elif event.type == "content_block_delta":
-                            delta = event.delta
-                            
-                            # Text content - accumulate but DON'T stream yet (we'll stream on final iteration)
-                            if hasattr(delta, "type") and delta.type == "text_delta":
-                                iteration_text += delta.text
-                            
-                            # Tool input delta
-                            elif hasattr(delta, "type") and delta.type == "input_json_delta":
-                                current_tool_input += delta.partial_json
-                        
-                        # Content block stop
-                        elif event.type == "content_block_stop":
-                            if current_tool_use:
-                                # Parse complete tool input with error handling
-                                try:
-                                    # Handle empty or whitespace input
-                                    if not current_tool_input or not current_tool_input.strip():
-                                        logger.warning(f"Empty tool input for {current_tool_use['name']}, using empty dict")
-                                        tool_input = {}
-                                    else:
-                                        tool_input = json.loads(current_tool_input)
-                                except json.JSONDecodeError as e:
-                                    logger.error(f"Failed to parse tool input for {current_tool_use['name']}: {e}")
-                                    logger.error(f"Raw input: {repr(current_tool_input)}")
-                                    # Use empty dict as fallback
-                                    tool_input = {}
-                                
-                                yield {
-                                    "type": "tool_use",
-                                    "tool": current_tool_use["name"],
-                                    "input": tool_input,
-                                }
-                                
-                                # Execute tool with error handling
-                                try:
-                                    tool_result = execute_tool(
-                                        current_tool_use["name"],
-                                        tool_input,
-                                        self.db,
-                                    )
-                                except Exception as e:
-                                    logger.error(f"Tool execution failed for {current_tool_use['name']}: {e}")
-                                    tool_result = {
-                                        "success": False,
-                                        "error": f"Tool execution failed: {str(e)}"
-                                    }
-                                
-                                yield {
-                                    "type": "tool_result",
-                                    "tool": current_tool_use["name"],
-                                    "result": tool_result,
-                                }
-                                
-                                # Track tool calls and results for saving
-                                iteration_tool_calls.append(current_tool_use["name"])
-                                all_tool_calls.append({
-                                    "id": current_tool_use["id"],
-                                    "name": current_tool_use["name"],
-                                    "input": tool_input,
-                                })
-                                all_tool_results.append({
-                                    "tool_use_id": current_tool_use["id"],
-                                    "content": json.dumps(tool_result),
-                                })
-                                
-                                # Add tool use and result to messages
-                                assistant_message = {
-                                    "role": "assistant",
-                                    "content": [
-                                        {
-                                            "type": "tool_use",
-                                            "id": current_tool_use["id"],
-                                            "name": current_tool_use["name"],
-                                            "input": tool_input,
-                                        }
-                                    ],
-                                }
-                                messages.append(assistant_message)
-                                
-                                tool_result_message = {
-                                    "role": "user",
-                                    "content": [
-                                        {
-                                            "type": "tool_result",
-                                            "tool_use_id": current_tool_use["id"],
-                                            "content": json.dumps(tool_result),
-                                        }
-                                    ],
-                                }
-                                messages.append(tool_result_message)
-                                
-                                current_tool_use = None
-                                current_tool_input = ""
-                
-                    # Get final message
-                    final_message = stream.get_final_message()
-                    
-                    # Check if we need another iteration (more tools to use)
-                    has_tool_use = any(
-                        block.type == "tool_use"
-                        for block in final_message.content
-                        if hasattr(block, "type")
-                    )
-                    
-                    # Check if this response has BOTH text and tool calls
-                    # If so, this should be the final response (efficient single-turn completion)
-                    has_text = bool(iteration_text.strip())
-                    
-                    if iteration_tool_calls and has_text:
-                        # Efficient! Tool call(s) + response text in ONE iteration
-                        assistant_response = iteration_text
-                        logger.info(f"⚡ Single-turn completion! Tool(s): {iteration_tool_calls} + Text: '{assistant_response}'")
-                        
-                        # Stream the text now
-                        for char in iteration_text:
-                            yield {
-                                "type": "text",
-                                "content": char,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=self.system_prompt,
+                        tools=self.gemini_tools,
+                        max_output_tokens=4096,
+                    ),
+                )
+
+                # Gather plain text from model parts
+                iteration_text_parts: list[str] = []
+                candidate_content = None
+                if response.candidates:
+                    candidate_content = response.candidates[0].content
+                    for part in (candidate_content.parts or []):
+                        part_text = getattr(part, "text", None)
+                        if part_text:
+                            iteration_text_parts.append(part_text)
+                iteration_text = "".join(iteration_text_parts).strip()
+
+                # Gather function calls (SDK helper first, then fallback from parts)
+                tool_calls = list(getattr(response, "function_calls", None) or [])
+                if not tool_calls and response.candidates:
+                    for part in (response.candidates[0].content.parts or []):
+                        fc = getattr(part, "function_call", None)
+                        if fc:
+                            tool_calls.append(fc)
+
+                if tool_calls:
+                    function_response_parts = []
+                    for idx, tool_call in enumerate(tool_calls):
+                        tool_name = tool_call.name
+                        tool_call_id = f"call_{iteration}_{idx}"
+                        raw_args_obj = tool_call.args or {}
+
+                        yield {
+                            "type": "tool_use_start",
+                            "tool": tool_name,
+                        }
+
+                        try:
+                            if isinstance(raw_args_obj, str):
+                                tool_input = json.loads(raw_args_obj) if raw_args_obj.strip() else {}
+                            else:
+                                tool_input = dict(raw_args_obj)
+                        except Exception:
+                            logger.error(f"Failed to parse tool input for {tool_name}: {raw_args_obj!r}")
+                            tool_input = {}
+
+                        yield {
+                            "type": "tool_use",
+                            "tool": tool_name,
+                            "input": tool_input,
+                        }
+
+                        try:
+                            tool_result = execute_tool(tool_name, tool_input, self.db)
+                        except Exception as e:
+                            logger.error(f"Tool execution failed for {tool_name}: {e}")
+                            tool_result = {
+                                "success": False,
+                                "error": f"Tool execution failed: {str(e)}",
                             }
-                        
-                        # Save and done
+
+                        yield {
+                            "type": "tool_result",
+                            "tool": tool_name,
+                            "result": tool_result,
+                        }
+
+                        all_tool_calls.append({
+                            "id": tool_call_id,
+                            "name": tool_name,
+                            "input": tool_input,
+                        })
+                        all_tool_results.append({
+                            "tool_use_id": tool_call_id,
+                            "content": json.dumps(tool_result),
+                        })
+
+                        function_response_parts.append({
+                            "functionResponse": {
+                                "name": tool_name,
+                                "response": {"result": tool_result},
+                            }
+                        })
+
+                    if candidate_content:
+                        contents.append(candidate_content)
+                    elif iteration_text:
+                        contents.append({"role": "model", "parts": [{"text": iteration_text}]})
+                    contents.append({"role": "user", "parts": function_response_parts})
+
+                    # Gemini can return text and tool calls together.
+                    if iteration_text:
+                        assistant_response = iteration_text
+                        for char in iteration_text:
+                            yield {"type": "text", "content": char}
+
                         if assistant_response or all_tool_calls:
                             self._save_message(
                                 role="assistant",
@@ -762,7 +499,6 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                                 tool_calls=all_tool_calls if all_tool_calls else None,
                                 tool_results=None,
                             )
-                        
                         if all_tool_results:
                             self._save_message(
                                 role="user",
@@ -770,48 +506,34 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
                                 tool_calls=None,
                                 tool_results=all_tool_results,
                             )
-                        
-                        logger.info("📤 Sending 'done' event to frontend (single-turn)")
                         yield {"type": "done"}
                         return
-                    
-                    elif not has_tool_use:
-                        # No more tools, this is the FINAL iteration - stream the text
-                        if has_text:
-                            assistant_response = iteration_text
-                            logger.info(f"✅ Final iteration. Streaming text: '{assistant_response}' (length: {len(assistant_response)})")
-                            
-                            # Stream text character by character
-                            for char in iteration_text:
-                                yield {
-                                    "type": "text",
-                                    "content": char,
-                                }
-                        else:
-                            logger.info(f"✅ Query complete. No text response (tools only).")
-                        
-                        # Save assistant response to database (with tool calls if any)
-                        if assistant_response or all_tool_calls:
-                            self._save_message(
-                                role="assistant",
-                                content=assistant_response,
-                                tool_calls=all_tool_calls if all_tool_calls else None,
-                                tool_results=None,  # Tool results go in separate user message
-                            )
-                        
-                        # Save tool results as a separate user message
-                        if all_tool_results:
-                            self._save_message(
-                                role="user",
-                                content="",  # No text content for tool result messages
-                                tool_calls=None,
-                                tool_results=all_tool_results,
-                            )
-                        
-                        # Always yield done before returning
-                        logger.info("📤 Sending 'done' event to frontend")
-                        yield {"type": "done"}
-                        return  # Exit the generator
+
+                    continue
+
+                # No tool calls means this is the final text response.
+                if iteration_text:
+                    assistant_response = iteration_text
+                    for char in iteration_text:
+                        yield {"type": "text", "content": char}
+
+                if assistant_response or all_tool_calls:
+                    self._save_message(
+                        role="assistant",
+                        content=assistant_response,
+                        tool_calls=all_tool_calls if all_tool_calls else None,
+                        tool_results=None,
+                    )
+                if all_tool_results:
+                    self._save_message(
+                        role="user",
+                        content="",
+                        tool_calls=None,
+                        tool_results=all_tool_results,
+                    )
+
+                yield {"type": "done"}
+                return
             
             # If we exit the loop due to max iterations
             if iteration >= max_iterations:
@@ -852,49 +574,64 @@ NEVER say: "I'll", "Let me", "I'm going to", "I can", "I will". Just respond wit
 
     def process_query_sync(self, user_query: str) -> dict[str, Any]:
         """Synchronous version for simple use cases."""
-        messages = [{"role": "user", "content": user_query}]
+        history = self._to_gemini_contents(self._load_conversation_history())
+        contents = history + [{"role": "user", "parts": [{"text": user_query}]}]
         
-        max_iterations = 3
+        max_iterations = 5
         iteration = 0
         final_response = ""
         
         while iteration < max_iterations:
             iteration += 1
-            
-            response = self.client.messages.create(
+
+            response = self.client.models.generate_content(
                 model=self.model,
-                max_tokens=8192,  # Doubled for Sonnet 4.5 - supports longer responses
-                system=self.system_prompt,
-                tools=TOOLS,
-                messages=messages,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_prompt,
+                    tools=self.gemini_tools,
+                    max_output_tokens=4096,
+                ),
             )
-            
-            # Add assistant response to messages
-            messages.append({"role": "assistant", "content": response.content})
-            
-            # Check for tool use
-            tool_results = []
-            has_tool_use = False
-            
-            for block in response.content:
-                if block.type == "text":
-                    final_response += block.text
-                elif block.type == "tool_use":
-                    has_tool_use = True
-                    # Execute tool
-                    tool_result = execute_tool(block.name, block.input, self.db)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(tool_result),
-                    })
-            
-            if not has_tool_use:
+
+            candidate_content = response.candidates[0].content if response.candidates else None
+            if candidate_content:
+                for part in (candidate_content.parts or []):
+                    if getattr(part, "text", None):
+                        final_response += part.text
+
+            tool_calls = list(getattr(response, "function_calls", None) or [])
+            if not tool_calls and response.candidates:
+                for part in (response.candidates[0].content.parts or []):
+                    fc = getattr(part, "function_call", None)
+                    if fc:
+                        tool_calls.append(fc)
+            if not tool_calls:
                 break
-            
-            # Add tool results to messages
-            if tool_results:
-                messages.append({"role": "user", "content": tool_results})
+
+            function_response_parts = []
+            for tool_call in tool_calls:
+                tool_name = tool_call.name
+                raw_args_obj = tool_call.args or {}
+                try:
+                    if isinstance(raw_args_obj, str):
+                        tool_input = json.loads(raw_args_obj) if raw_args_obj.strip() else {}
+                    else:
+                        tool_input = dict(raw_args_obj)
+                except Exception:
+                    tool_input = {}
+
+                tool_result = execute_tool(tool_name, tool_input, self.db)
+                function_response_parts.append({
+                    "functionResponse": {
+                        "name": tool_name,
+                        "response": {"result": tool_result},
+                    }
+                })
+
+            if candidate_content:
+                contents.append(candidate_content)
+            contents.append({"role": "user", "parts": function_response_parts})
         
         return {
             "response": final_response,

@@ -30,8 +30,8 @@ async def agent_websocket(websocket: WebSocket, db: Session = Depends(get_db)):
         await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Deepgram API key not configured")
         return
     
-    if not settings.anthropic_api_key:
-        await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Anthropic API key not configured")
+    if not settings.gemini_api_key:
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="GEMINI_API_KEY not configured")
         return
     
     await websocket.accept()
@@ -45,6 +45,8 @@ async def agent_websocket(websocket: WebSocket, db: Session = Depends(get_db)):
     deepgram_url = f"wss://api.deepgram.com/v2/listen?{query_params}"
     
     deepgram_ws = None
+    audio_task = None
+    deepgram_task = None
     current_transcript = ""
     is_processing = False
     
@@ -54,7 +56,7 @@ async def agent_websocket(websocket: WebSocket, db: Session = Depends(get_db)):
             try:
                 deepgram_ws = await websockets.connect(
                     deepgram_url,
-                    extra_headers={"Authorization": f"Token {settings.deepgram_api_key}"},
+                    additional_headers={"Authorization": f"Token {settings.deepgram_api_key}"},
                 )
                 logger.info("✅ Connected to Deepgram FLUX")
                 break
@@ -71,8 +73,12 @@ async def agent_websocket(websocket: WebSocket, db: Session = Depends(get_db)):
                     message = await websocket.receive()
                     
                     if "bytes" in message and message["bytes"]:
-                        if deepgram_ws and deepgram_ws.open:
-                            await deepgram_ws.send(message["bytes"])
+                        if deepgram_ws:
+                            try:
+                                await deepgram_ws.send(message["bytes"])
+                            except websockets.exceptions.ConnectionClosed:
+                                logger.info("Deepgram websocket is closed while forwarding audio")
+                                break
                     
                     elif "text" in message:
                         data = json.loads(message["text"])
@@ -216,7 +222,7 @@ async def agent_websocket(websocket: WebSocket, db: Session = Depends(get_db)):
         logger.info("🧹 Cleaning up...")
         
         for task in [audio_task, deepgram_task]:
-            if not task.done():
+            if task and not task.done():
                 task.cancel()
         
         if deepgram_ws:
@@ -238,8 +244,8 @@ async def agent_query(query: dict[str, str], db: Session = Depends(get_db)):
     """Simple HTTP endpoint for agent queries (non-streaming)."""
     settings = get_settings()
     
-    if not settings.anthropic_api_key:
-        return {"error": "Anthropic API key not configured"}
+    if not settings.gemini_api_key:
+        return {"error": "GEMINI_API_KEY not configured"}
     
     user_query = query.get("query", "")
     if not user_query:

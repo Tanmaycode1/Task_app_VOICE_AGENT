@@ -20,7 +20,7 @@ class Settings:
     api_prefix: str = os.getenv("API_PREFIX", "/api")
     environment: str = os.getenv("ENVIRONMENT", "local")
     deepgram_api_key: str | None = os.getenv("DEEPGRAM_API_KEY")
-    anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
+    gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
     
     @property
     def database_path(self) -> str:

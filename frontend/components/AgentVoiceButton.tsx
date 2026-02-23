@@ -29,6 +29,7 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
   const hasSpokenCurrentResponseRef = useRef(false);
   const lastSpokenTextRef = useRef<string>('');
   const currentResponseTextRef = useRef<string>('');
+  const clearResponseTimeoutRef = useRef<number | null>(null);
 
   const [isActive, setIsActive] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState('');
@@ -40,10 +41,28 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
   const baseUrl = process.env.NEXT_PUBLIC_AGENT_WS_URL ?? 'ws://localhost:8000/api/agent';
 
   // Text-to-Speech
-  const speak = useCallback((text: string) => {
+  const resetResponseUI = useCallback(() => {
+    setCurrentTranscript('');
+    setAgentResponse('');
+    currentResponseTextRef.current = '';
+    hasSpokenCurrentResponseRef.current = false;
+    lastSpokenTextRef.current = '';
+  }, []);
+
+  const scheduleResponseClear = useCallback((delayMs: number) => {
+    if (clearResponseTimeoutRef.current) {
+      window.clearTimeout(clearResponseTimeoutRef.current);
+    }
+    clearResponseTimeoutRef.current = window.setTimeout(() => {
+      resetResponseUI();
+      clearResponseTimeoutRef.current = null;
+    }, delayMs);
+  }, [resetResponseUI]);
+
+  const speak = useCallback((text: string): boolean => {
     if (!window.speechSynthesis || !text.trim()) {
       console.log('🔇 speak() skipped - no synthesis or empty text');
-      return;
+      return false;
     }
     
     const trimmedText = text.trim();
@@ -51,13 +70,13 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
     // Prevent speaking the same text twice - check BEFORE we do anything
     if (lastSpokenTextRef.current === trimmedText) {
       console.log('🔇 Skipping duplicate speak for:', trimmedText.substring(0, 50) + '...');
-      return;
+      return false;
     }
     
     // If already speaking the same text, don't cancel it
     if (isSpeakingRef.current && window.speechSynthesis.speaking && lastSpokenTextRef.current === trimmedText) {
       console.log('🔇 Already speaking this text, skipping');
-      return;
+      return false;
     }
     
     console.log('🔊 Starting to speak:', trimmedText.substring(0, 50) + '...', 'Full length:', trimmedText.length);
@@ -70,12 +89,18 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
       setTimeout(() => {
         createAndSpeak(trimmedText);
       }, 100);
-      return;
+      return true;
     }
     
     createAndSpeak(trimmedText);
+    return true;
     
     function createAndSpeak(trimmedText: string) {
+      if (clearResponseTimeoutRef.current) {
+        window.clearTimeout(clearResponseTimeoutRef.current);
+        clearResponseTimeoutRef.current = null;
+      }
+
       // Mark this text as about to be spoken (BEFORE speaking)
       lastSpokenTextRef.current = trimmedText;
       
@@ -127,6 +152,8 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
       utterance.onend = () => {
         console.log('✅ Speech ended');
         setIsSpeaking(false);
+        // Keep response visible while speaking; clear shortly after speech completes.
+        scheduleResponseClear(500);
       };
       utterance.onerror = (error) => {
         console.error('❌ Speech error:', error);
@@ -135,11 +162,12 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
         if (lastSpokenTextRef.current === trimmedText) {
           lastSpokenTextRef.current = '';
         }
+        scheduleResponseClear(1000);
       };
       
       window.speechSynthesis.speak(utterance);
     }
-  }, []);
+  }, [scheduleResponseClear]);
 
   // Stop speech
   const stopSpeaking = useCallback(() => {
@@ -152,6 +180,10 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
   // Cleanup
   const cleanup = useCallback(() => {
     stopSpeaking();
+    if (clearResponseTimeoutRef.current) {
+      window.clearTimeout(clearResponseTimeoutRef.current);
+      clearResponseTimeoutRef.current = null;
+    }
     
     if (processorRef.current) {
       processorRef.current.disconnect();
@@ -311,7 +343,10 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
                     if (stateText && !hasSpokenCurrentResponseRef.current) {
                       console.log('✅ Speaking response from state, length:', stateText.length);
                       hasSpokenCurrentResponseRef.current = true;
-                      speak(stateText);
+                      const started = speak(stateText);
+                      if (!started) {
+                        scheduleResponseClear(3000);
+                      }
                     }
                     return currentResponse;
                   });
@@ -321,20 +356,16 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
                     console.log('✅ Speaking response from ref, length:', responseText.length);
                     hasSpokenCurrentResponseRef.current = true;
                     // Speak directly with the response text
-                    speak(responseText);
+                    const started = speak(responseText);
+                    if (!started) {
+                      scheduleResponseClear(3000);
+                    }
                   } else {
                     console.log('⚠️ Already spoken, skipping');
+                    scheduleResponseClear(1200);
                   }
                 }
               }, 200); // Increased delay to ensure all text chunks are processed
-              
-              setTimeout(() => {
-                setCurrentTranscript('');
-                setAgentResponse('');
-                currentResponseTextRef.current = '';
-                hasSpokenCurrentResponseRef.current = false; // Reset for next response
-                lastSpokenTextRef.current = ''; // Reset last spoken text
-              }, 3000);
             }
             
             else if (event.type === 'error') {
@@ -427,13 +458,40 @@ export function AgentVoiceButton({ onTasksUpdated, onUICommand, onProcessingStar
     cleanup();
     setIsActive(false);
     setIsProcessing(false);
-    setCurrentTranscript('');
-    setAgentResponse('');
     setToolActivity('');
-    currentResponseTextRef.current = '';
-    hasSpokenCurrentResponseRef.current = false;
-    lastSpokenTextRef.current = '';
-  }, [cleanup]);
+    resetResponseUI();
+  }, [cleanup, resetResponseUI]);
+
+  // Spacebar shortcut: toggle mic on/off
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || event.repeat) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName.toLowerCase();
+        const isTypingField =
+          tag === 'input' ||
+          tag === 'textarea' ||
+          tag === 'select' ||
+          target.isContentEditable;
+        if (isTypingField) return;
+      }
+
+      event.preventDefault();
+
+      if (isProcessing) return;
+      if (isActive) {
+        handleStop();
+      } else {
+        void handleStart();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isActive, isProcessing, handleStart, handleStop]);
 
   return (
     <div className="fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-3">
