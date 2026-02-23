@@ -15,7 +15,7 @@ load_dotenv()
 class Settings:
     """Immutable application settings derived from environment variables."""
 
-    project_name: str = os.getenv("PROJECT_NAME", "Shram AI Backend")
+    project_name: str = os.getenv("PROJECT_NAME", "Todoist Backend")
     version: str = os.getenv("PROJECT_VERSION", "0.1.0")
     api_prefix: str = os.getenv("API_PREFIX", "/api")
     environment: str = os.getenv("ENVIRONMENT", "local")
@@ -28,7 +28,7 @@ class Settings:
         db_path = os.getenv("DATABASE_PATH")
         if db_path:
             return db_path
-        # Default: shram.db in backend directory
+        # Default: SQLite database in backend directory
         backend_dir = Path(__file__).parent.parent.parent
         return str(backend_dir / "shram.db")
 

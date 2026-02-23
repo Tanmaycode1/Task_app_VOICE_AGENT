@@ -1,1 +1,1 @@
-"""Application package for the Shram AI backend."""
+"""Application package for the Todoist backend."""
