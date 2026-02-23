@@ -1,6 +1,6 @@
-# Todoist - Voice Agent Task Manager
+# Todoist - Voice Copilot for Task Management
 
-Todoist is a real-time, voice-first task manager where the AI agent does three things in one loop: it understands natural language, executes task operations, and controls the UI. The core experience is "speak once, see action instantly."
+Todoist is a real-time, voice-first AI copilot for task management. It does three things in one loop: understands natural language, executes task operations, and controls the UI. The core experience is "speak once, see action instantly."
 
 ## Project Summary
 
