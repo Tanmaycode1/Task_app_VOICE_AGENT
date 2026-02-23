@@ -1,36 +1,71 @@
 # Todoist - Voice Agent Task Manager
 
-This project is a real-time, voice-first task manager where the AI agent does more than answer questions. It takes actions, updates data, and controls the interface while the conversation is happening. The goal was to build something that feels like operating software through a human assistant, not filling a form through voice.
+Todoist is a real-time, voice-first task manager where the AI agent does three things in one loop: it understands natural language, executes task operations, and controls the UI. The core experience is "speak once, see action instantly."
 
-I built this as a complete agentic loop: live audio in, live UI updates out. The browser captures microphone audio and streams it to the backend. The backend proxies that stream to Deepgram FLUX for transcription and end-of-turn detection. As soon as a turn ends, the transcript is sent to the agent orchestrator. The orchestrator decides whether to call task tools, whether to change the UI, and what to say back. The frontend consumes those streaming events immediately, updates state, and speaks the final response through TTS.
+## Project Summary
 
-The most important design decision is that the agent can directly influence interface state through structured commands, not by pretending with text. Tools on the backend return `ui_command` payloads such as `change_view` and `show_choices`. The frontend listens for these tool results and maps them to React state transitions. This is what enables real "agentic UI" behavior: your voice intent becomes actual screen state without extra clicks.
+This project is designed as an end-to-end agentic interface rather than a chat-only assistant. The user speaks naturally, audio is streamed live, the transcript is converted into tool calls, and the frontend updates immediately based on structured backend events. The result is a hands-free workflow for managing tasks, dates, priorities, and views.
 
-This app uses WebSockets for realtime communication. SSE is not used in this implementation. The `/api/agent` socket is multiplexed and carries both directions: audio chunks flowing up from the browser and streamed events flowing down from the backend. The `/api/flux` socket is the lower-level Deepgram proxy path and is useful when isolating transcription behavior from the full agent loop.
+## Core Capabilities
 
-The streamed event model is intentionally explicit. You see phases like `thinking`, `tool_use_start`, `tool_use`, `tool_result`, progressive `text`, and final `done`. That event contract makes the UI feel trustworthy because users can watch what the system is doing in real time instead of waiting on a blank screen.
+- Voice-driven task creation, update, deletion, and search.
+- Agent-controlled UI navigation (`change_view`, `show_choices`).
+- Real-time streaming feedback (`thinking`, tool activity, text response).
+- Context-aware follow-ups and ambiguity handling.
+- Browser-native TTS with feedback-loop prevention.
 
-## Architecture and Technical Choices
+## Architecture
 
-The frontend is built with Next.js + React + Tailwind. The backend is FastAPI with SQLAlchemy and SQLite. Deepgram FLUX handles speech-to-text and turn detection, while Gemini (`google-genai`) handles tool-calling orchestration. Browser `SpeechSynthesis` is used for low-latency TTS output with zero extra backend service.
+### Frontend
 
-I intentionally kept orchestration logic in Python on the backend so tool execution and domain state stay close together. The orchestrator emits a clear stream of events, and the frontend remains a deterministic renderer of those events. This separation keeps the UI simple while still enabling complex voice flows.
+The frontend is built with Next.js, React, and Tailwind. It handles microphone capture, renders streaming agent state, applies UI commands, and speaks responses through the Web Speech API.
 
-The agent tools cover task CRUD, search/filter operations, bulk operations, history loading, and UI commands. That makes it possible to handle commands like "move all urgent tasks to next week and show me the week view" in one continuous conversation loop.
+### Backend
 
-## Product Behavior That Matters
+The backend is FastAPI with SQLAlchemy and SQLite. It manages websocket streams, task tools, orchestration, and conversation persistence.
 
-This app handles practical details that usually break voice demos. Mic capture is paused while TTS is speaking to avoid self-feedback loops. Agent responses stay visible until speech playback actually finishes, rather than disappearing on an arbitrary timeout. Ambiguous operations can open explicit choice modals, so destructive actions are controlled without killing conversational speed. There is also a keyboard-friendly mic toggle via spacebar (outside input fields), which makes testing and daily use much faster.
+### AI + Speech Stack
 
-For reliability, websocket setup and proxy failures are handled with retries and defensive cleanup. If one side of the stream drops, the app exits the current loop cleanly instead of getting stuck in a half-open state.
+- LLM orchestration: Gemini 2.5 Flash (`google-genai`)
+- Speech-to-text: Deepgram FLUX
+- Text-to-speech: Browser SpeechSynthesis API
 
-## What This Demonstrates
+## Realtime Communication Model
 
-This project demonstrates end-to-end agent integration in a real UI, not just model calls. It shows how to combine speech streaming, function/tool calling, event-driven rendering, and stateful UX into one coherent product. It also demonstrates the difference between "chat about tasks" and "operate task software through an agent."
+This project uses **WebSockets**, not SSE.
+
+- `ws /api/agent`: full-duplex voice + agent event stream.
+- `ws /api/flux`: Deepgram proxy path.
+
+`/api/agent` carries both:
+- Upstream: PCM16 audio chunks from browser to backend.
+- Downstream: transcription and agent events back to the UI.
+
+### Main Event Types
+
+- Transport events: `flux_event`, `agent_start`, `agent_event`, `agent_error`
+- Agent event payloads: `thinking`, `tool_use_start`, `tool_use`, `tool_result`, `text`, `done`
+
+## How the Agent Controls UI
+
+The agent does not directly mutate frontend components. Instead, backend tools return structured `ui_command` payloads. The frontend receives these commands from `tool_result` events and maps them to React state updates.
+
+Typical commands:
+- `change_view` for daily/weekly/monthly/list navigation and filters
+- `show_choices` for ambiguity resolution and human-in-the-loop selection
+
+This design keeps orchestration on the backend while keeping frontend rendering deterministic and maintainable.
+
+## Product-Level Behavior
+
+- Mic is muted while TTS is speaking to avoid self-capture.
+- Agent response remains visible until speech playback completes.
+- Spacebar toggles mic on/off (outside input fields).
+- Retry and cleanup logic handles dropped websocket states safely.
 
 ## Quick Start
 
-Backend setup:
+### Backend
 
 ```bash
 cd backend
@@ -53,7 +88,7 @@ Run backend:
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Frontend setup:
+### Frontend
 
 ```bash
 cd frontend
@@ -73,19 +108,21 @@ Run frontend:
 npm run dev
 ```
 
-Open `http://localhost:3000` and test with natural commands like "Add a task for tomorrow", "Move that meeting to next week", "Delete the compliance task", or "Show urgent tasks for Friday."
-
-If you want to verify the architecture while testing, watch backend logs and you'll see the realtime loop clearly: Deepgram turn events, agent tool calls, tool results, streamed text, and final completion.
+Open `http://localhost:3000`.
 
 ## Command Examples
 
-| Say this | Agent action |
+| Command | Outcome |
 |---|---|
-| "Add a task to prepare interview notes tomorrow at 10 AM" | Creates a task with scheduled date/time and confirms creation. |
-| "Move the interview prep task to next week" | Finds matching task, updates schedule, and navigates to relevant view. |
-| "Mark the interview prep task as complete" | Updates task status to completed and confirms. |
-| "Delete the compliance task" | Finds and deletes the matching task; asks for choice if multiple matches exist. |
-| "Show urgent tasks" | Switches to list view and applies urgent priority filtering. |
-| "Show my tasks for Friday" | Lists Friday tasks, narrates them, and navigates to Friday view. |
-| "What options did you show?" | Uses history lookup and explains previously shown choices. |
-| "Undo last delete" | Loads relevant history, restores deleted task state, and confirms restore. |
+| "Add a task to prepare interview notes tomorrow at 10 AM" | Creates a scheduled task and confirms. |
+| "Move the interview prep task to next week" | Finds match, updates schedule, navigates to relevant view. |
+| "Mark the interview prep task complete" | Updates status to completed. |
+| "Delete the compliance task" | Deletes a clear match or opens choices if ambiguous. |
+| "Show urgent tasks" | Switches to list view with urgent filter. |
+| "Show my tasks for Friday" | Narrates tasks and navigates to Friday view. |
+| "What options did you show?" | Loads relevant history and summarizes prior choices. |
+| "Undo last delete" | Restores deleted task state from conversation/tool history. |
+
+## AI-Assisted Development Note
+
+This project was built with strong AI assistance using Cursor. The initial backend and frontend scaffolding was generated through Cursor, and I iterated from there with my own product direction and orchestration logic. I used Cursor's auto model for development speed. Bug analysis and issue resolution were handled manually by me, while much of the implementation-heavy work (naming, formatting, code generation, and documentation drafting) was accelerated with Cursor.
